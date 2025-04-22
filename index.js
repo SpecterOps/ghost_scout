@@ -385,6 +385,103 @@ async function processHunterResults(domain, hunterData) {
     }
 }
 
+// Route to serve the domain details page
+fastify.get('/domain/:domain', async (request, reply) => {
+    return reply.sendFile('pages/domain.html');
+});
+
+// API route to get specific domain information
+fastify.get('/api/domain/:domain', async (request, reply) => {
+    const { domain } = request.params;
+
+    try {
+        const domainData = await db.get('SELECT * FROM Domain WHERE name = ?', [domain]);
+
+        if (!domainData) {
+            return {
+                success: false,
+                error: 'Domain not found'
+            };
+        }
+
+        return {
+            success: true,
+            domain: domainData
+        };
+    } catch (error) {
+        fastify.log.error(error);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+});
+
+// API route to get targets for a specific domain
+fastify.get('/api/domain/:domain/targets', async (request, reply) => {
+    const { domain } = request.params;
+
+    try {
+        // Get all targets for this domain
+        const targets = await db.all(`
+            SELECT t.*, 
+                   COUNT(tsm.source_id) as sourceCount
+            FROM Target t
+            LEFT JOIN TargetSourceMap tsm ON t.email = tsm.target_email
+            WHERE t.domain_name = ?
+            GROUP BY t.email
+        `, [domain]);
+
+        return {
+            success: true,
+            targets
+        };
+    } catch (error) {
+        fastify.log.error(error);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+});
+
+// API route to get target details with sources
+fastify.get('/api/target/:email', async (request, reply) => {
+    const { email } = request.params;
+
+    try {
+        // Get target details
+        const target = await db.get('SELECT * FROM Target WHERE email = ?', [email]);
+
+        if (!target) {
+            return {
+                success: false,
+                error: 'Target not found'
+            };
+        }
+
+        // Get sources for this target
+        const sources = await db.all(`
+            SELECT sd.*
+            FROM SourceData sd
+            JOIN TargetSourceMap tsm ON sd.id = tsm.source_id
+            WHERE tsm.target_email = ?
+        `, [email]);
+
+        return {
+            success: true,
+            target,
+            sources
+        };
+    } catch (error) {
+        fastify.log.error(error);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+});
+
 // Start the server
 const start = async () => {
     try {

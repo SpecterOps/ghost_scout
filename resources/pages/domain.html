@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Domain Details - Lead Reconnaissance Tool</title>
+    <script src="/resources/js/alpine.min.js" defer></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <link href="/resources/css/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/resources/css/main.css">
+</head>
+
+<body class="bg-gray-100">
+    <div class="container mx-auto px-4 py-8" x-data="domainDetailsApp()">
+        <nav class="mb-6">
+            <a href="/" class="text-blue-500 hover:text-blue-700">← Back to Dashboard</a>
+        </nav>
+
+        <div x-show="loading" class="flex justify-center items-center py-12">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+        </div>
+
+        <div x-show="!loading && domainData">
+            <header class="mb-8">
+                <h1 class="text-3xl font-bold text-gray-800" x-text="`Domain: ${domainData.name}`"></h1>
+                <p class="text-gray-600">Details and target contacts</p>
+            </header>
+
+            <div class="bg-white shadow rounded-lg p-6 mb-6">
+                <h2 class="text-xl font-semibold mb-4">Domain Information</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <p class="text-sm text-gray-500">MX Records</p>
+                        <p class="text-gray-800 break-words" x-text="domainData.mx || 'None found'"></p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500">SPF Record</p>
+                        <p class="text-gray-800 break-words" x-text="domainData.spf || 'None found'"></p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500">DMARC Record</p>
+                        <p class="text-gray-800 break-words" x-text="domainData.dmarc || 'None found'"></p>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-500">Email Format</p>
+                        <p class="text-gray-800" x-text="domainData.email_format || 'Unknown'"></p>
+                    </div>
+                </div>
+                <div class="mt-4">
+                    <button @click="startRecon(domainData.name)"
+                        class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 focus:outline-none">
+                        Start New Recon
+                    </button>
+                </div>
+            </div>
+
+            <div class="bg-white shadow rounded-lg p-6">
+                <h2 class="text-xl font-semibold mb-4">Target Contacts</h2>
+
+                <div x-show="targets.length === 0" class="text-center py-8 text-gray-500">
+                    No contacts found for this domain. Start reconnaissance to find potential contacts.
+                </div>
+
+                <div x-show="targets.length > 0">
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th
+                                        class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Name
+                                    </th>
+                                    <th
+                                        class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Email
+                                    </th>
+                                    <th
+                                        class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Status
+                                    </th>
+                                    <th
+                                        class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Sources
+                                    </th>
+                                    <th
+                                        class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Actions
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                <template x-for="target in targets" :key="target.email">
+                                    <tr>
+                                        <td class="px-4 py-2 whitespace-nowrap text-sm font-medium text-gray-900"
+                                            x-text="target.name || 'Unknown'"></td>
+                                        <td class="px-4 py-2 text-sm text-gray-500" x-text="target.email"></td>
+                                        <td class="px-4 py-2 text-sm">
+                                            <span x-show="target.status === 'pending'"
+                                                class="px-2 py-1 text-xs rounded-full bg-yellow-100 text-yellow-800">Pending</span>
+                                            <span x-show="target.status === 'enriched'"
+                                                class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">Enriched</span>
+                                            <span x-show="target.status === 'failed'"
+                                                class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800">Failed</span>
+                                        </td>
+                                        <td class="px-4 py-2 text-sm text-gray-500"
+                                            x-text="target.sourceCount + ' source(s)'"></td>
+                                        <td class="px-4 py-2 whitespace-nowrap text-sm">
+                                            <button @click="viewTargetDetails(target.email)"
+                                                class="text-blue-500 hover:text-blue-700">
+                                                View Details
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div x-show="selectedTarget" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+                <div class="bg-white rounded-lg max-w-2xl w-full max-h-screen overflow-y-auto p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-xl font-semibold" x-text="selectedTarget ? selectedTarget.name : ''"></h3>
+                        <button @click="selectedTarget = null" class="text-gray-500 hover:text-gray-700" title="Close">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                                stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    </div>
+
+                    <div>
+                        <p class="text-sm text-gray-500">Email</p>
+                        <p class="text-gray-800 mb-4" x-text="selectedTarget ? selectedTarget.email : ''"></p>
+
+                        <p class="text-sm text-gray-500">Profile</p>
+                        <p class="text-gray-800 mb-4"
+                            x-text="selectedTarget && selectedTarget.profile ? selectedTarget.profile : 'No profile information available'">
+                        </p>
+
+                        <div x-show="selectedTargetSources.length > 0">
+                            <h4 class="font-medium mb-2">Sources</h4>
+                            <ul class="space-y-2">
+                                <template x-for="source in selectedTargetSources" :key="source.id">
+                                    <li class="border rounded p-3">
+                                        <div class="flex justify-between">
+                                            <a :href="source.url" target="_blank"
+                                                class="text-blue-500 hover:text-blue-700 break-all"
+                                                x-text="source.url"></a>
+                                            <span x-text="source.discovery_method"
+                                                class="text-xs bg-gray-100 px-2 py-1 rounded ml-2"></span>
+                                        </div>
+                                        <p class="text-sm text-gray-500 mt-1" x-text="'Status: ' + source.status"></p>
+                                    </li>
+                                </template>
+                            </ul>
+                        </div>
+
+                        <div x-show="selectedTargetSources.length === 0" class="text-center py-4 text-gray-500">
+                            No sources found for this contact.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div x-show="!loading && !domainData" class="bg-white shadow rounded-lg p-6 text-center">
+            <p class="text-gray-700">Domain not found. Please check the URL and try again.</p>
+            <a href="/" class="mt-4 inline-block bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">Return to
+                Dashboard</a>
+        </div>
+
+        <!-- Status messages -->
+        <div x-show="reconStatus.length > 0" class="mt-6 bg-white shadow rounded-lg p-6">
+            <h2 class="text-xl font-semibold mb-4">Reconnaissance Status</h2>
+            <div class="space-y-2">
+                <template x-for="(status, index) in reconStatus" :key="index">
+                    <div class="p-2 rounded bg-blue-100 text-sm text-gray-700" x-text="status"></div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function domainDetailsApp() {
+            return {
+                domainName: '',
+                domainData: null,
+                targets: [],
+                loading: true,
+                reconStatus: [],
+                socket: null,
+                selectedTarget: null,
+                selectedTargetSources: [],
+
+                init() {
+                    // Extract domain name from URL
+                    const urlParts = window.location.pathname.split('/');
+                    this.domainName = urlParts[urlParts.length - 1];
+
+                    // Connect socket for real-time updates
+                    this.connectSocket();
+
+                    // Load domain data
+                    this.loadDomainData();
+
+                    // Load targets for this domain
+                    this.loadTargets();
+                },
+
+                connectSocket() {
+                    this.socket = io();
+
+                    this.socket.on('reconUpdate', (data) => {
+                        this.reconStatus.push(data.message);
+                    });
+
+                    this.socket.on('reconComplete', (data) => {
+                        if (data.domain === this.domainName) {
+                            this.reconStatus.push(`Completed reconnaissance for ${data.domain}. Found ${data.targetsCount} potential contacts.`);
+                            this.loadTargets(); // Refresh targets list
+                        }
+                    });
+
+                    this.socket.on('domainUpdated', (data) => {
+                        if (data.domain === this.domainName) {
+                            this.loadDomainData(); // Refresh domain data
+                        }
+                    });
+                },
+
+                async loadDomainData() {
+                    try {
+                        const response = await fetch(`/api/domain/${this.domainName}`);
+                        const data = await response.json();
+
+                        if (data.success && data.domain) {
+                            this.domainData = data.domain;
+                        } else {
+                            this.domainData = null;
+                        }
+                    } catch (error) {
+                        console.error('Error loading domain data:', error);
+                        this.domainData = null;
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                async loadTargets() {
+                    try {
+                        const response = await fetch(`/api/domain/${this.domainName}/targets`);
+                        const data = await response.json();
+
+                        if (data.success) {
+                            this.targets = data.targets;
+                        }
+                    } catch (error) {
+                        console.error('Error loading targets:', error);
+                    }
+                },
+
+                startRecon(domain) {
+                    this.reconStatus = [`Starting reconnaissance for ${domain}...`];
+                    this.socket.emit('startRecon', { domain });
+                },
+
+                async viewTargetDetails(email) {
+                    try {
+                        // Get target details
+                        const response = await fetch(`/api/target/${email}`);
+                        const data = await response.json();
+
+                        if (data.success) {
+                            this.selectedTarget = data.target;
+                            this.selectedTargetSources = data.sources;
+                        } else {
+                            console.error('Error loading target details:', data.error);
+                        }
+                    } catch (error) {
+                        console.error('Error loading target details:', error);
+                    }
+                }
+            };
+        }
+    </script>
+</body>
+
+</html>
