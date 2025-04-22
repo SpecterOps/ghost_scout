@@ -245,6 +245,7 @@ fastify.post('/api/recon/start', async (request, reply) => {
 });
 
 // Function to process and store Hunter.io results
+// Function to process and store Hunter.io results
 async function processHunterResults(domain, hunterData) {
     // Initialize results object
     const results = {
@@ -264,7 +265,6 @@ async function processHunterResults(domain, hunterData) {
         if (hunterData.data && hunterData.data.pattern) {
             results.emailFormat = hunterData.data.pattern;
 
-            // CHANGE 2: Update the email_format using data.pattern
             await db.run(
                 'UPDATE Domain SET email_format = ? WHERE name = ?',
                 [hunterData.data.pattern, domain]
@@ -285,43 +285,58 @@ async function processHunterResults(domain, hunterData) {
 
             // Process each email
             for (const email of hunterData.data.emails) {
-                // CHANGE 3: Mark all emails as pending and don't fill out profiles
                 await db.run(
                     `INSERT INTO Target (email, name, domain_name, status) 
-             VALUES (?, ?, ?, ?) 
-             ON CONFLICT(email) DO UPDATE SET 
-             name = ?, 
-             domain_name = ?, 
-             status = ?`,
+                    VALUES (?, ?, ?, ?) 
+                    ON CONFLICT(email) DO UPDATE SET 
+                    name = ?, 
+                    domain_name = ?, 
+                    status = ?`,
                     [
                         email.value,
                         `${email.first_name} ${email.last_name}`,
                         domain,
-                        'pending',  // Mark as pending instead of enriched
+                        'pending',
                         `${email.first_name} ${email.last_name}`,
                         domain,
-                        'pending'   // Mark as pending instead of enriched
+                        'pending'
                     ]
                 );
 
                 // Process sources for this email
                 if (email.sources && email.sources.length > 0) {
                     for (const source of email.sources) {
-                        // CHANGE 4: Mark all sourcedata urls as pending
+                        // Check if this is a LinkedIn source via Google Search
+                        let sourceUrl = source.uri;
+
+                        // Special case for LinkedIn: use the profile URL instead of Google search URL
+                        if (source.domain === 'linkedin.com' &&
+                            source.uri.includes('google.com/search') &&
+                            email.linkedin) {
+                            // Use the actual LinkedIn profile URL instead
+                            sourceUrl = email.linkedin;
+
+                            fastify.io.emit('reconUpdate', {
+                                message: `Using LinkedIn profile URL for ${email.first_name} ${email.last_name} instead of Google search URL`
+                            });
+                        }
+
                         let sourceResult = await db.run(
                             `INSERT OR IGNORE INTO SourceData 
-                 (url, discovery_method, data, status) 
-                 VALUES (?, ?, ?, ?)`,
+                            (url, discovery_method, data, status) 
+                            VALUES (?, ?, ?, ?)`,
                             [
-                                source.uri,
+                                sourceUrl,
                                 'hunter.io',
                                 JSON.stringify({
                                     domain: source.domain,
                                     extracted_on: source.extracted_on,
                                     last_seen_on: source.last_seen_on,
-                                    still_on_page: source.still_on_page
+                                    still_on_page: source.still_on_page,
+                                    // Store both URLs if we're using LinkedIn profile instead of Google search
+                                    original_uri: source.uri !== sourceUrl ? source.uri : null
                                 }),
-                                'pending'  // Mark as pending instead of mined
+                                'pending'
                             ]
                         );
 
@@ -332,7 +347,7 @@ async function processHunterResults(domain, hunterData) {
                         } else {
                             const existingSource = await db.get(
                                 'SELECT id FROM SourceData WHERE url = ?',
-                                [source.uri]
+                                [sourceUrl]
                             );
                             sourceId = existingSource.id;
                         }
@@ -340,14 +355,16 @@ async function processHunterResults(domain, hunterData) {
                         // Map the target to the source
                         await db.run(
                             `INSERT OR IGNORE INTO TargetSourceMap (target_email, source_id)
-                 VALUES (?, ?)`,
+                            VALUES (?, ?)`,
                             [email.value, sourceId]
                         );
 
                         // Add to results for reporting
                         results.sources.push({
-                            url: source.uri,
-                            domain: source.domain
+                            url: sourceUrl,
+                            domain: source.domain,
+                            // Also track if we're using a LinkedIn profile instead
+                            original_url: source.uri !== sourceUrl ? source.uri : null
                         });
                     }
                 }
@@ -358,9 +375,6 @@ async function processHunterResults(domain, hunterData) {
                 });
             }
         }
-
-        // CHANGE 1: Don't update the mx record with organization data
-        // We'll leave the existing DNS records alone
 
         fastify.io.emit('domainUpdated', { domain });
 
