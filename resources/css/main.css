@@ -1,0 +1,8 @@
+/* Additional custom styles can go here */
+body {
+    font-family: 'Inter', system-ui, sans-serif;
+}
+
+.container {
+    max-width: 1200px;
+}

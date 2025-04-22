@@ -1,0 +1,57 @@
+-- DOMAIN TABLE
+-- Stores information about target company domains
+CREATE TABLE IF NOT EXISTS Domain (
+  name TEXT PRIMARY KEY,            -- Domain name (e.g., "company.com")
+  mx TEXT,                          -- MX records for email server configuration
+  spf TEXT,                         -- SPF records for email validation
+  dmarc TEXT,                       -- DMARC policy records
+  email_format TEXT                 -- Common email format used (e.g., "firstname.lastname")
+);
+
+-- TARGET TABLE
+-- Stores information about target individuals (prospects)
+CREATE TABLE IF NOT EXISTS Target (
+  email TEXT PRIMARY KEY,           -- Email address of the target
+  name TEXT,                        -- Full name of the target
+  profile TEXT,                     -- Profile information or notes
+  domain_name TEXT,                 -- Domain name they belong to
+  status TEXT DEFAULT 'pending',    -- Status of target enrichment (pending, enriched, failed)
+  FOREIGN KEY (domain_name) REFERENCES Domain(name)
+);
+
+-- SOURCEDATA TABLE
+-- Stores information about source URLs where target information was discovered
+CREATE TABLE IF NOT EXISTS SourceData (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  url TEXT UNIQUE NOT NULL,         -- Source URL where data was found
+  discovery_method TEXT NOT NULL,   -- Method used to discover (e.g., hunter.io, google, linkedin)
+  data TEXT,                        -- Raw data or additional context from source
+  status TEXT DEFAULT 'pending',    -- Status of mining (pending, mined, failed)
+  status_message TEXT,              -- Details about failures or success
+  last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- Last time this source was checked
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP     -- When this source was added
+);
+
+-- TARGETSOURCEMAP TABLE
+-- Maps the many-to-many relationship between targets and sources
+CREATE TABLE IF NOT EXISTS TargetSourceMap (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  target_email TEXT,               -- Reference to target
+  source_id INTEGER,               -- Reference to source
+  FOREIGN KEY (target_email) REFERENCES Target(email),
+  FOREIGN KEY (source_id) REFERENCES SourceData(id)
+);
+
+-- PRETEXT TABLE
+-- Stores sales outreach messages generated for targets
+CREATE TABLE IF NOT EXISTS Pretext (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  target_email TEXT,               -- Target this message is for
+  prompt TEXT,                     -- Prompt used to generate message
+  subject TEXT,                    -- Email subject line
+  body TEXT,                       -- Email body content
+  link TEXT,                       -- Any tracking links included
+  status TEXT DEFAULT 'draft',     -- Status (draft, approved, rejected)
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (target_email) REFERENCES Target(email)
+);

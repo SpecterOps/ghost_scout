@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lead Reconnaissance Tool</title>
+    <script src="/resources/js/alpine.min.js" defer></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <link href="/resources/css/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/resources/css/main.css">
+    <style>
+        /* Custom styles for DNS record cells */
+        .dns-record-cell {
+            max-width: 200px;
+            white-space: normal;
+            word-wrap: break-word;
+            word-break: break-all;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-100">
+    <div class="container mx-auto px-4 py-8" x-data="reconApp()">
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-gray-800">Lead Reconnaissance Tool</h1>
+            <p class="text-gray-600">Find and analyze target companies and their employees for sales outreach</p>
+        </header>
+
+        <div class="bg-white shadow rounded-lg p-6">
+            <h2 class="text-xl font-semibold mb-4">Add Target Company</h2>
+
+            <form @submit.prevent="addDomain" class="mb-6">
+                <div class="flex">
+                    <input type="text" x-model="newDomain" placeholder="Enter company domain (e.g. example.com)"
+                        class="flex-grow px-4 py-2 border rounded-l focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        :disabled="loading" required>
+                    <button type="submit"
+                        class="bg-blue-500 text-white px-4 py-2 rounded-r hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        :disabled="loading">
+                        <span x-show="!loading">Add</span>
+                        <span x-show="loading">Processing...</span>
+                    </button>
+                </div>
+            </form>
+
+            <div x-show="domains.length > 0">
+                <h3 class="font-medium text-lg mb-2">Tracked Domains</h3>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th
+                                    class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Domain</th>
+                                <th
+                                    class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    MX Records</th>
+                                <th
+                                    class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    SPF</th>
+                                <th
+                                    class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    DMARC</th>
+                                <th
+                                    class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Email Format</th>
+                                <th
+                                    class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            <template x-for="domain in domains" :key="domain.name">
+                                <tr>
+                                    <td class="px-4 py-2 whitespace-nowrap text-sm font-medium text-gray-900"
+                                        x-text="domain.name"></td>
+                                    <td class="px-4 py-2 text-sm text-gray-500 dns-record-cell"
+                                        x-text="domain.mx || 'N/A'"></td>
+                                    <td class="px-4 py-2 text-sm text-gray-500 dns-record-cell"
+                                        x-text="domain.spf || 'N/A'"></td>
+                                    <td class="px-4 py-2 text-sm text-gray-500 dns-record-cell"
+                                        x-text="domain.dmarc || 'N/A'"></td>
+                                    <td class="px-4 py-2 text-sm text-gray-500"
+                                        x-text="domain.email_format || 'Unknown'"></td>
+                                    <td class="px-4 py-2 whitespace-nowrap text-sm">
+                                        <div class="flex space-x-2">
+                                            <button @click="findRelatedDomains(domain.name)"
+                                                class="text-sm bg-purple-500 text-white px-2 py-1 rounded hover:bg-purple-600">
+                                                Find Related
+                                            </button>
+                                            <button @click="startRecon(domain.name)"
+                                                class="text-sm bg-green-500 text-white px-2 py-1 rounded hover:bg-green-600">
+                                                Start Recon
+                                            </button>
+                                            <a :href="'/domain/' + domain.name"
+                                                class="text-sm bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600">
+                                                Details
+                                            </a>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div x-show="domains.length === 0" class="text-center py-4 text-gray-500">
+                No domains added yet. Add your first target company.
+            </div>
+        </div>
+
+        <div x-show="reconStatus.length > 0" class="mt-6 bg-white shadow rounded-lg p-6">
+            <h2 class="text-xl font-semibold mb-4">Reconnaissance Status</h2>
+            <div class="space-y-2">
+                <template x-for="(status, index) in reconStatus" :key="index">
+                    <div class="p-2 rounded bg-blue-100 text-sm text-gray-700" x-text="status"></div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function reconApp() {
+            return {
+                newDomain: '',
+                domains: [],
+                reconStatus: [],
+                loading: false,
+                socket: null,
+
+                init() {
+                    this.loadDomains();
+                    this.connectSocket();
+                },
+
+                connectSocket() {
+                    this.socket = io();
+
+                    this.socket.on('reconUpdate', (data) => {
+                        this.reconStatus.push(data.message);
+                    });
+
+                    this.socket.on('reconComplete', (data) => {
+                        this.reconStatus.push(`Completed reconnaissance for ${data.domain}. Found ${data.targetsCount} potential contacts.`);
+                        this.loadDomains();
+                    });
+
+                    this.socket.on('domainUpdated', (data) => {
+                        this.loadDomains(); // Refresh domain data when updated
+                    });
+
+                    this.socket.on('relatedDomainsFound', (data) => {
+                        this.reconStatus.push(`Found ${data.relatedDomains.length} related domains for ${data.primaryDomain}.`);
+                        this.loadDomains(); // Refresh domain data
+                    });
+                },
+
+                async loadDomains() {
+                    try {
+                        const response = await fetch('/api/domains');
+                        const data = await response.json();
+
+                        if (data.success) {
+                            this.domains = data.domains;
+                        }
+                    } catch (error) {
+                        console.error('Error loading domains:', error);
+                    }
+                },
+
+                async addDomain() {
+                    if (!this.newDomain) return;
+
+                    this.loading = true;
+                    try {
+                        const response = await fetch('/api/domain', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ domain: this.newDomain }),
+                        });
+
+                        const data = await response.json();
+
+                        if (data.success) {
+                            this.reconStatus.push(`Added domain ${this.newDomain} and retrieved DNS records.`);
+                            this.loadDomains();
+                            this.newDomain = '';
+                        } else {
+                            alert('Error adding domain: ' + data.error);
+                        }
+                    } catch (error) {
+                        console.error('Error adding domain:', error);
+                        alert('Error adding domain. See console for details.');
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                async findRelatedDomains(domain) {
+                    this.reconStatus.push(`Searching for domains related to ${domain}...`);
+
+                    try {
+                        const response = await fetch('/api/domain/related', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ domain }),
+                        });
+
+                        const data = await response.json();
+
+                        if (data.success) {
+                            if (data.relatedDomains && data.relatedDomains.length > 0) {
+                                this.reconStatus.push(`Found ${data.relatedDomains.length} related domains for ${domain}:`);
+                                data.relatedDomains.forEach(relatedDomain => {
+                                    this.reconStatus.push(`- ${relatedDomain}`);
+                                });
+                                this.loadDomains(); // Refresh the domains list
+                            } else {
+                                this.reconStatus.push(`No related domains found for ${domain}.`);
+                            }
+                        } else {
+                            this.reconStatus.push(`Error finding related domains: ${data.error}`);
+                        }
+                    } catch (error) {
+                        console.error('Error finding related domains:', error);
+                        this.reconStatus.push(`Error finding related domains. See console for details.`);
+                    }
+                },
+
+                startRecon(domain) {
+                    this.reconStatus = [`Starting reconnaissance for ${domain}...`];
+                    this.socket.emit('startRecon', { domain });
+                }
+            };
+        }
+
+    </script>
+</body>
+
+</html>
