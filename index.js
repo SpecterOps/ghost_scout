@@ -2,12 +2,14 @@
 const path = require('path');
 const fastify = require('fastify')({ logger: false });
 const fs = require('fs');
+require('dotenv').config();
 const sqlite3 = require('sqlite3');
 const { open } = require('sqlite');
 // Import DNS queue module
 const dnsQueue = require('./lib/dnsQueue');
 // Import the autodiscover service
 const autodiscoverService = require('./lib/autodiscover');
+const hunterService = require('./lib/hunterService');
 
 // Ensure db directory exists
 if (!fs.existsSync('./db')) {
@@ -184,6 +186,191 @@ fastify.post('/api/domain/related', async (request, reply) => {
     }
 });
 
+fastify.post('/api/recon/start', async (request, reply) => {
+    const { domain } = request.body;
+    const hunterApiKey = process.env.HUNTER_API_KEY;
+
+    if (!domain) {
+        return reply.code(400).send({
+            success: false,
+            error: 'Domain is required'
+        });
+    }
+
+    if (!hunterApiKey) {
+        return reply.code(500).send({
+            success: false,
+            error: 'Hunter API key not configured'
+        });
+    }
+
+    try {
+        // Notify clients that recon has started
+        fastify.io.emit('reconUpdate', {
+            message: `Starting reconnaissance for ${domain} using Hunter.io...`
+        });
+
+        // Get domain info from Hunter.io
+        const hunterData = await hunterService.searchDomain(domain, hunterApiKey);
+
+        // Process the results
+        const results = await processHunterResults(domain, hunterData);
+
+        // Notify clients that recon has completed
+        fastify.io.emit('reconComplete', {
+            domain,
+            targetsCount: results.targetsCount
+        });
+
+        return {
+            success: true,
+            domain,
+            results
+        };
+
+    } catch (error) {
+        fastify.log.error(`Recon error for ${domain}: ${error.message}`);
+
+        // Notify clients that recon failed
+        fastify.io.emit('reconUpdate', {
+            message: `Reconnaissance for ${domain} failed: ${error.message}`
+        });
+
+        return {
+            success: false,
+            domain,
+            error: error.message
+        };
+    }
+});
+
+// Function to process and store Hunter.io results
+async function processHunterResults(domain, hunterData) {
+    // Initialize results object
+    const results = {
+        emailFormat: null,
+        targetsCount: 0,
+        sources: []
+    };
+
+    try {
+        // Make sure domain exists in our DB
+        await db.run(
+            'INSERT OR IGNORE INTO Domain (name) VALUES (?)',
+            [domain]
+        );
+
+        // Update domain with email format if available
+        if (hunterData.data && hunterData.data.pattern) {
+            results.emailFormat = hunterData.data.pattern;
+
+            // CHANGE 2: Update the email_format using data.pattern
+            await db.run(
+                'UPDATE Domain SET email_format = ? WHERE name = ?',
+                [hunterData.data.pattern, domain]
+            );
+
+            fastify.io.emit('reconUpdate', {
+                message: `Found email format for ${domain}: ${hunterData.data.pattern}`
+            });
+        }
+
+        // Process each email found
+        if (hunterData.data && hunterData.data.emails && hunterData.data.emails.length > 0) {
+            results.targetsCount = hunterData.data.emails.length;
+
+            fastify.io.emit('reconUpdate', {
+                message: `Found ${results.targetsCount} potential contacts for ${domain}`
+            });
+
+            // Process each email
+            for (const email of hunterData.data.emails) {
+                // CHANGE 3: Mark all emails as pending and don't fill out profiles
+                await db.run(
+                    `INSERT INTO Target (email, name, domain_name, status) 
+             VALUES (?, ?, ?, ?) 
+             ON CONFLICT(email) DO UPDATE SET 
+             name = ?, 
+             domain_name = ?, 
+             status = ?`,
+                    [
+                        email.value,
+                        `${email.first_name} ${email.last_name}`,
+                        domain,
+                        'pending',  // Mark as pending instead of enriched
+                        `${email.first_name} ${email.last_name}`,
+                        domain,
+                        'pending'   // Mark as pending instead of enriched
+                    ]
+                );
+
+                // Process sources for this email
+                if (email.sources && email.sources.length > 0) {
+                    for (const source of email.sources) {
+                        // CHANGE 4: Mark all sourcedata urls as pending
+                        let sourceResult = await db.run(
+                            `INSERT OR IGNORE INTO SourceData 
+                 (url, discovery_method, data, status) 
+                 VALUES (?, ?, ?, ?)`,
+                            [
+                                source.uri,
+                                'hunter.io',
+                                JSON.stringify({
+                                    domain: source.domain,
+                                    extracted_on: source.extracted_on,
+                                    last_seen_on: source.last_seen_on,
+                                    still_on_page: source.still_on_page
+                                }),
+                                'pending'  // Mark as pending instead of mined
+                            ]
+                        );
+
+                        // Get the source ID (either newly inserted or existing)
+                        let sourceId;
+                        if (sourceResult.lastID) {
+                            sourceId = sourceResult.lastID;
+                        } else {
+                            const existingSource = await db.get(
+                                'SELECT id FROM SourceData WHERE url = ?',
+                                [source.uri]
+                            );
+                            sourceId = existingSource.id;
+                        }
+
+                        // Map the target to the source
+                        await db.run(
+                            `INSERT OR IGNORE INTO TargetSourceMap (target_email, source_id)
+                 VALUES (?, ?)`,
+                            [email.value, sourceId]
+                        );
+
+                        // Add to results for reporting
+                        results.sources.push({
+                            url: source.uri,
+                            domain: source.domain
+                        });
+                    }
+                }
+
+                // Emit progress update
+                fastify.io.emit('reconUpdate', {
+                    message: `Processed contact: ${email.first_name} ${email.last_name} (${email.value})`
+                });
+            }
+        }
+
+        // CHANGE 1: Don't update the mx record with organization data
+        // We'll leave the existing DNS records alone
+
+        fastify.io.emit('domainUpdated', { domain });
+
+        return results;
+    } catch (error) {
+        console.error(`Error processing Hunter.io results: ${error.message}`);
+        throw error;
+    }
+}
+
 // Start the server
 const start = async () => {
     try {
@@ -199,28 +386,31 @@ const start = async () => {
             fastify.io.on('connection', (socket) => {
                 console.log('Client connected');
 
-                socket.on('startRecon', (data) => {
+                socket.on('startRecon', async (data) => {
                     console.log(`Starting recon for domain: ${data.domain}`);
 
-                    // Here you would start your recon process
-                    // For now, we'll just emit some fake updates
-
                     socket.emit('reconUpdate', {
-                        message: `Scanning domain ${data.domain} for email format...`
+                        message: `Starting reconnaissance for ${data.domain}...`
                     });
 
-                    setTimeout(() => {
-                        socket.emit('reconUpdate', {
-                            message: `Found potential email format for ${data.domain}: {first}.{last}@${data.domain}`
+                    try {
+                        // Call our API endpoint to start the recon
+                        const response = await fetch(`http://localhost:${fastify.server.address().port}/api/recon/start`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ domain: data.domain }),
                         });
-                    }, 2000);
 
-                    setTimeout(() => {
-                        socket.emit('reconComplete', {
-                            domain: data.domain,
-                            targetsCount: 5
+                        // We don't need to handle the response here as the Socket.io
+                        // events will already be emitted during processing
+                    } catch (error) {
+                        console.error(`Error starting recon: ${error.message}`);
+                        socket.emit('reconUpdate', {
+                            message: `Error starting reconnaissance: ${error.message}`
                         });
-                    }, 5000);
+                    }
                 });
 
                 socket.on('disconnect', () => {
