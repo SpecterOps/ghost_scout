@@ -4,7 +4,8 @@ const fastify = require('fastify')({ logger: false });
 const fs = require('fs');
 const sqlite3 = require('sqlite3');
 const { open } = require('sqlite');
-const dnsService = require('./lib/dns');
+// Import DNS queue module
+const dnsQueue = require('./lib/dnsQueue');
 // Import the autodiscover service
 const autodiscoverService = require('./lib/autodiscover');
 
@@ -93,27 +94,19 @@ fastify.post('/api/domain', async (request, reply) => {
     const { domain } = request.body;
 
     try {
-        // Get DNS records
-        const dnsRecords = await dnsService.getAllDnsRecords(domain);
-
-        // Insert or update domain with DNS records
+        // First add the domain to the database with minimal info
         await db.run(
-            'INSERT INTO Domain (name, mx, spf, dmarc) VALUES (?, ?, ?, ?) ' +
-            'ON CONFLICT(name) DO UPDATE SET mx = ?, spf = ?, dmarc = ?',
-            [domain, dnsRecords.mx, dnsRecords.spf, dnsRecords.dmarc,
-                dnsRecords.mx, dnsRecords.spf, dnsRecords.dmarc]
+            'INSERT OR IGNORE INTO Domain (name) VALUES (?)',
+            [domain]
         );
 
-        // Emit a Socket.io event to update clients
-        fastify.io.emit('domainUpdated', {
-            domain,
-            dnsRecords
-        });
+        // Queue the domain for DNS lookups
+        await dnsQueue.queueDomainForDnsLookup(domain);
 
         return {
             success: true,
             domain,
-            dnsRecords
+            message: "Domain added and queued for DNS lookups"
         };
     } catch (error) {
         fastify.log.error(error);
@@ -162,6 +155,9 @@ fastify.post('/api/domain/related', async (request, reply) => {
                         'INSERT OR IGNORE INTO Domain (name) VALUES (?)',
                         [relatedDomain]
                     );
+
+                    // Queue the newly discovered domain for DNS lookups
+                    await dnsQueue.queueDomainForDnsLookup(relatedDomain);
                 }
             }
 
@@ -196,6 +192,9 @@ const start = async () => {
         // Setup Socket.io event handlers
         fastify.ready(err => {
             if (err) throw err;
+
+            // Initialize the DNS queue processor with db and io
+            dnsQueue.initDnsQueueProcessor(db, fastify.io);
 
             fastify.io.on('connection', (socket) => {
                 console.log('Client connected');
