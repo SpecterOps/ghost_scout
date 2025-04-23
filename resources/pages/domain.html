@@ -47,10 +47,14 @@
                         <p class="text-gray-800" x-text="domainData.email_format || 'Unknown'"></p>
                     </div>
                 </div>
-                <div class="mt-4">
+                <div class="mt-4 flex flex-wrap gap-2">
                     <button @click="startRecon(domainData.name)"
                         class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 focus:outline-none">
                         Start New Recon
+                    </button>
+                    <button @click="scrapeAllSources()"
+                        class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 focus:outline-none">
+                        Scrape All Sources
                     </button>
                 </div>
             </div>
@@ -111,10 +115,14 @@
                                         </td>
                                         <td class="px-4 py-2 text-sm text-gray-500"
                                             x-text="target.sourceCount + ' source(s)'"></td>
-                                        <td class="px-4 py-2 whitespace-nowrap text-sm">
+                                        <td class="px-4 py-2 whitespace-nowrap text-sm flex gap-2">
                                             <button @click="viewTargetDetails(target.email)"
                                                 class="text-blue-500 hover:text-blue-700">
                                                 View Details
+                                            </button>
+                                            <button @click="scrapeSourcesForTarget(target.email)"
+                                                class="text-green-500 hover:text-green-700">
+                                                Scrape Sources
                                             </button>
                                         </td>
                                     </tr>
@@ -131,6 +139,14 @@
                     <div class="flex justify-between items-center mb-4">
                         <h3 class="text-xl font-semibold" x-text="selectedTarget ? selectedTarget.name : ''"></h3>
                         <div class="flex items-center">
+                            <button @click="scrapeSourcesForTarget(selectedTarget ? selectedTarget.email : '')"
+                                class="text-green-500 hover:text-green-700 mr-4" title="Scrape Sources">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                </svg>
+                            </button>
                             <button @click="deleteTarget()" class="text-red-500 hover:text-red-700 mr-4"
                                 title="Delete Target">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
@@ -182,6 +198,31 @@
                                                 x-text="' | First seen: ' + formatDate(source.data.extracted_on)"
                                                 class="ml-2"></span>
                                         </p>
+                                        <!-- Source content preview section -->
+                                        <div x-show="source.status === 'mined' && source.data"
+                                            class="mt-2 border-t pt-2">
+                                            <p class="text-xs text-gray-500"
+                                                x-show="source.data && source.data.scrapedAt">
+                                                Scraped: <span x-text="formatDate(source.data.scrapedAt)"></span>
+                                            </p>
+                                            <button @click="toggleSourceContent(source.id)"
+                                                class="text-xs text-blue-500 mt-1">
+                                                <span
+                                                    x-text="expandedSourceId === source.id ? 'Hide Content Preview' : 'Show Content Preview'"></span>
+                                            </button>
+                                            <div x-show="expandedSourceId === source.id"
+                                                class="mt-2 p-2 bg-gray-50 rounded text-xs max-h-40 overflow-y-auto">
+                                                <p class="text-xs text-gray-500 mb-1"
+                                                    x-show="source.data && source.data.contentType">
+                                                    Content Type: <span x-text="source.data.contentType"></span>
+                                                </p>
+                                                <p x-show="source.data && source.data.content"
+                                                    x-text="typeof source.data.content === 'string' ? source.data.content.substring(0, 300) + '...' : 'Content preview not available'">
+                                                </p>
+                                                <p x-show="!source.data || !source.data.content"
+                                                    class="italic text-gray-500">No content available</p>
+                                            </div>
+                                        </div>
                                     </li>
                                 </template>
                             </ul>
@@ -438,6 +479,71 @@
                         month: 'short',
                         day: 'numeric'
                     });
+                },
+                async scrapeSourcesForTarget(email) {
+                    if (!email) return;
+
+                    try {
+                        const response = await fetch(`/api/targets/scrape-sources`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ targetEmails: [email] })
+                        });
+
+                        const data = await response.json();
+
+                        if (data.success) {
+                            this.reconStatus.unshift(`Queued sources for scraping: ${email}`);
+                        } else {
+                            console.error('Error queuing sources for scraping:', data.error);
+                            this.reconStatus.unshift(`Error queuing sources for scraping: ${data.error}`);
+                        }
+                    } catch (error) {
+                        console.error('Error queuing sources for scraping:', error);
+                        this.reconStatus.unshift(`Error queuing sources for scraping: ${error.message}`);
+                    }
+                },
+
+                async scrapeAllSources() {
+                    try {
+                        // Get all target emails for this domain
+                        const targetEmails = this.targets.map(target => target.email);
+
+                        if (targetEmails.length === 0) {
+                            this.reconStatus.unshift('No targets found to scrape sources for.');
+                            return;
+                        }
+
+                        const response = await fetch(`/api/targets/scrape-sources`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ targetEmails })
+                        });
+
+                        const data = await response.json();
+
+                        if (data.success) {
+                            this.reconStatus.unshift(`Queued ${data.count} sources for ${targetEmails.length} targets.`);
+                        } else {
+                            console.error('Error queuing sources for scraping:', data.error);
+                            this.reconStatus.unshift(`Error queuing sources for scraping: ${data.error}`);
+                        }
+                    } catch (error) {
+                        console.error('Error queuing sources for scraping:', error);
+                        this.reconStatus.unshift(`Error queuing sources for scraping: ${error.message}`);
+                    }
+                },
+
+                toggleSourceContent(sourceId) {
+                    if (this.expandedSourceId === sourceId) {
+                        this.expandedSourceId = null;
+                    } else {
+                        this.expandedSourceId = sourceId;
+                    }
                 }
             };
         }

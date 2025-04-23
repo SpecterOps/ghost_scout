@@ -10,6 +10,7 @@ const dnsQueue = require('./lib/dnsQueue');
 // Import the autodiscover service
 const autodiscoverService = require('./lib/autodiscover');
 const hunterService = require('./lib/hunterService');
+const sourceQueue = require('./lib/sourceQueue');
 
 // Ensure db directory exists
 if (!fs.existsSync('./db')) {
@@ -585,6 +586,59 @@ fastify.delete('/api/target/:email', async (request, reply) => {
     }
 });
 
+// API route to scrape sources for targets
+fastify.post('/api/targets/scrape-sources', async (request, reply) => {
+    const { targetEmails } = request.body;
+
+    try {
+        if (!Array.isArray(targetEmails)) {
+            return {
+                success: false,
+                error: 'targetEmails must be an array'
+            };
+        }
+
+        // Queue sources for the specified targets
+        const result = await sourceQueue.queueSourcesForTargets(targetEmails, db);
+
+        // Notify clients about the queued job
+        fastify.io.emit('scrapeUpdate', {
+            message: result.message,
+            targetCount: targetEmails.length,
+            sourceCount: result.count
+        });
+
+        return {
+            success: true,
+            ...result
+        };
+    } catch (error) {
+        fastify.log.error(`Error queuing sources for targets: ${error.message}`);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+});
+
+// API route to get all sources
+fastify.get('/api/sources', async (request, reply) => {
+    try {
+        const sources = await db.all(`
+            SELECT sd.*, COUNT(tsm.target_email) as targetCount 
+            FROM SourceData sd
+            LEFT JOIN TargetSourceMap tsm ON sd.id = tsm.source_id
+            GROUP BY sd.id
+            ORDER BY sd.last_checked DESC
+        `);
+
+        return { success: true, sources };
+    } catch (error) {
+        fastify.log.error(error);
+        return { success: false, error: error.message };
+    }
+});
+
 // Start the server
 const start = async () => {
     try {
@@ -596,6 +650,9 @@ const start = async () => {
 
             // Initialize the DNS queue processor with db and io
             dnsQueue.initDnsQueueProcessor(db, fastify.io);
+
+            //Initialize the source queue processor with db and io
+            sourceQueue.initSourceQueueProcessor(db, fastify.io);
 
             fastify.io.on('connection', (socket) => {
                 console.log('Client connected');
