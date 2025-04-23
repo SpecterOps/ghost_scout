@@ -61,6 +61,10 @@
                         class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 focus:outline-none">
                         Scrape All Sources
                     </button>
+                    <button @click="generateAllProfiles()"
+                        class="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-700 focus:outline-none">
+                        Generate All Profiles
+                    </button>
                 </div>
             </div>
 
@@ -129,6 +133,11 @@
                                                 class="text-green-500 hover:text-green-700">
                                                 Scrape Sources
                                             </button>
+                                            <button x-show="target.status === 'enriched'"
+                                                @click="generateProfile(target.email)"
+                                                class="text-purple-500 hover:text-purple-700">
+                                                Generate Profile
+                                            </button>
                                         </td>
                                     </tr>
                                 </template>
@@ -160,6 +169,15 @@
                                         d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                                 </svg>
                             </button>
+                            <button @click="generateProfile(selectedTarget ? selectedTarget.email : '')"
+                                x-show="selectedTarget && selectedTarget.status === 'enriched'"
+                                class="text-purple-500 hover:text-purple-700 mr-4" title="Generate Profile">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                            </button>
                             <button @click="selectedTarget = null" class="text-gray-500 hover:text-gray-700"
                                 title="Close">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
@@ -176,9 +194,9 @@
                         <p class="text-gray-800 mb-4" x-text="selectedTarget ? selectedTarget.email : ''"></p>
 
                         <p class="text-sm text-gray-500">Profile</p>
-                        <p class="text-gray-800 mb-4"
+                        <div class="text-gray-800 mb-4 whitespace-pre-line"
                             x-text="selectedTarget && selectedTarget.profile ? selectedTarget.profile : 'No profile information available'">
-                        </p>
+                        </div>
 
                         <p class="text-sm text-gray-500">Tenure</p>
                         <p class="text-gray-800 mb-4"
@@ -363,6 +381,19 @@
                                 // If the target isn't in our current list, refresh the whole list
                                 this.loadTargets();
                             }
+                        }
+                    });
+                    this.socket.on('profileGenerated', (data) => {
+                        if (data && data.email) {
+                            this.reconStatus.unshift(`Profile generated for ${data.email}`);
+
+                            // Refresh target details if currently viewing
+                            if (this.selectedTarget && this.selectedTarget.email === data.email) {
+                                this.viewTargetDetails(data.email);
+                            }
+
+                            // Also refresh targets list to update status
+                            this.loadTargets();
                         }
                     });
                 },
@@ -644,6 +675,78 @@
                         this.expandedSourceId = null;
                     } else {
                         this.expandedSourceId = sourceId;
+                    }
+                },
+                async generateProfile(email) {
+                    if (!email) return;
+
+                    try {
+                        this.reconStatus.unshift(`Queuing profile generation for ${email}...`);
+
+                        const response = await fetch('/api/target/generate-profile', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ email })
+                        });
+
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+
+                        const data = await response.json();
+
+                        if (data.success) {
+                            this.reconStatus.unshift(`Profile generation for ${email} has been queued. Job ID: ${data.jobId}`);
+                        } else {
+                            console.error('Error queuing profile generation:', data.error);
+                            this.reconStatus.unshift(`Error queuing profile generation: ${data.error}`);
+                        }
+                    } catch (error) {
+                        console.error('Error queuing profile generation:', error);
+                        this.reconStatus.unshift(`Error queuing profile generation: ${error.message}`);
+                    }
+                },
+
+                async generateAllProfiles() {
+                    // Find all enriched targets
+                    const enrichedTargets = this.targets.filter(target => target.status === 'enriched');
+
+                    if (enrichedTargets.length === 0) {
+                        this.reconStatus.unshift('No enriched targets found for profile generation.');
+                        return;
+                    }
+
+                    try {
+                        this.reconStatus.unshift(`Queuing profile generation for ${enrichedTargets.length} targets...`);
+
+                        const response = await fetch('/api/targets/generate-profiles', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                targetEmails: enrichedTargets.map(target => target.email),
+                                domainName: this.domainName
+                            })
+                        });
+
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+
+                        const data = await response.json();
+
+                        if (data.success) {
+                            this.reconStatus.unshift(`Profile generation for ${data.count} targets has been queued.`);
+                        } else {
+                            console.error('Error queuing profile generation:', data.error);
+                            this.reconStatus.unshift(`Error queuing profile generation: ${data.error}`);
+                        }
+                    } catch (error) {
+                        console.error('Error queuing profile generation:', error);
+                        this.reconStatus.unshift(`Error queuing profile generation: ${error.message}`);
                     }
                 }
             };

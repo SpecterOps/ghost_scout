@@ -11,6 +11,7 @@ const dnsQueue = require('./lib/dnsQueue');
 const autodiscoverService = require('./lib/autodiscover');
 const hunterService = require('./lib/hunterService');
 const sourceQueue = require('./lib/sourceQueue');
+const profileQueue = require('./lib/profileQueue');
 
 // Ensure db directory exists
 if (!fs.existsSync('./db')) {
@@ -643,6 +644,114 @@ fastify.get('/api/sources', async (request, reply) => {
     }
 });
 
+// API route to generate profile for a single target
+fastify.post('/api/target/generate-profile', async (request, reply) => {
+    const { email } = request.body;
+
+    if (!email) {
+        return reply.code(400).send({
+            success: false,
+            error: 'Email is required'
+        });
+    }
+
+    try {
+        // Check if the target exists and is in the enriched state
+        const target = await db.get('SELECT * FROM Target WHERE email = ?', [email]);
+
+        if (!target) {
+            return reply.code(404).send({
+                success: false,
+                error: 'Target not found'
+            });
+        }
+
+        if (target.status !== 'enriched') {
+            return reply.code(400).send({
+                success: false,
+                error: `Target status is ${target.status}, not enriched`
+            });
+        }
+
+        // Queue the profile generation
+        const result = await profileQueue.queueProfileGeneration(email);
+
+        return {
+            success: true,
+            email,
+            jobId: result.jobId
+        };
+    } catch (error) {
+        fastify.log.error(`Error queueing profile generation for ${email}: ${error.message}`);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+});
+
+// API route to generate profiles for multiple targets
+fastify.post('/api/targets/generate-profiles', async (request, reply) => {
+    const { targetEmails, domainName } = request.body;
+
+    if (!Array.isArray(targetEmails) || targetEmails.length === 0) {
+        return reply.code(400).send({
+            success: false,
+            error: 'targetEmails must be a non-empty array'
+        });
+    }
+
+    if (!domainName) {
+        return reply.code(400).send({
+            success: false,
+            error: 'domainName is required'
+        });
+    }
+
+    try {
+        // Get all targets with enriched status from the provided emails
+        const enrichedTargets = await Promise.all(
+            targetEmails.map(async (email) => {
+                const target = await db.get('SELECT * FROM Target WHERE email = ? AND status = ?', [email, 'enriched']);
+                return target;
+            })
+        );
+
+        // Filter out any null values (targets that don't exist or aren't enriched)
+        const validTargets = enrichedTargets.filter(target => target !== null);
+
+        if (validTargets.length === 0) {
+            return reply.code(400).send({
+                success: false,
+                error: 'No valid enriched targets found'
+            });
+        }
+
+        // Queue profile generation for all valid targets
+        const result = await profileQueue.queueProfilesForTargets(
+            validTargets.map(target => target.email),
+            domainName
+        );
+
+        // Notify clients that profile generation has been queued
+        fastify.io.emit('reconUpdate', {
+            message: `Queued profile generation for ${result.count} targets in ${domainName}`
+        });
+
+        return {
+            success: true,
+            count: result.count,
+            domain: domainName
+        };
+    } catch (error) {
+        fastify.log.error(`Error queueing profile generation for multiple targets: ${error.message}`);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+});
+
 // Start the server
 const start = async () => {
     try {
@@ -657,6 +766,9 @@ const start = async () => {
 
             //Initialize the source queue processor with db and io
             sourceQueue.initSourceQueueProcessor(db, fastify.io);
+
+            // Initialize the profile queue processor with db and io
+            profileQueue.initProfileQueueProcessor(db, fastify.io);
 
             fastify.io.on('connection', (socket) => {
                 console.log('Client connected');
