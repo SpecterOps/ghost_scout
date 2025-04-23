@@ -345,6 +345,26 @@
                             this.loadTargets();
                         }
                     });
+                    this.socket.on('targetStatusUpdated', (data) => {
+                        if (data && data.email) {
+                            // Add a status message
+                            this.reconStatus.unshift(`Target ${data.email} status updated to: ${data.status}`);
+
+                            // Update the target in the targets array if it exists
+                            const targetIndex = this.targets.findIndex(t => t.email === data.email);
+                            if (targetIndex !== -1) {
+                                this.targets[targetIndex].status = data.status;
+
+                                // If this target is currently selected in the modal, update it there too
+                                if (this.selectedTarget && this.selectedTarget.email === data.email) {
+                                    this.selectedTarget.status = data.status;
+                                }
+                            } else {
+                                // If the target isn't in our current list, refresh the whole list
+                                this.loadTargets();
+                            }
+                        }
+                    });
                 },
 
                 async loadDomainData() {
