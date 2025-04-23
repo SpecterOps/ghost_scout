@@ -234,7 +234,32 @@
 
                 startRecon(domain) {
                     this.reconStatus = [`Starting reconnaissance for ${domain}...`];
-                    this.socket.emit('startRecon', { domain });
+
+                    // Call the API directly instead of emitting a socket event
+                    fetch(`/api/recon/start`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ domain }),
+                    })
+                        .then(response => {
+                            if (!response.ok) {
+                                throw new Error(`HTTP error! status: ${response.status}`);
+                            }
+                            return response.json();
+                        })
+                        .then(data => {
+                            if (data.success) {
+                                this.reconStatus.push(`Initiated reconnaissance for ${domain}.`);
+                            } else {
+                                this.reconStatus.push(`Error starting reconnaissance: ${data.error}`);
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Error starting recon:', error);
+                            this.reconStatus.push(`Error starting reconnaissance: ${error.message}`);
+                        });
                 }
             };
         }

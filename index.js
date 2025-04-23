@@ -274,7 +274,6 @@ fastify.post('/api/recon/start', async (request, reply) => {
 });
 
 // Function to process and store Hunter.io results
-// Function to process and store Hunter.io results
 async function processHunterResults(domain, hunterData) {
     // Initialize results object
     const results = {
@@ -661,33 +660,6 @@ const start = async () => {
 
             fastify.io.on('connection', (socket) => {
                 console.log('Client connected');
-
-                socket.on('startRecon', async (data) => {
-                    console.log(`Starting recon for domain: ${data.domain}`);
-
-                    socket.emit('reconUpdate', {
-                        message: `Starting reconnaissance for ${data.domain}...`
-                    });
-
-                    try {
-                        // Call our API endpoint to start the recon
-                        const response = await fetch(`http://localhost:${fastify.server.address().port}/api/recon/start`, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({ domain: data.domain }),
-                        });
-
-                        // We don't need to handle the response here as the Socket.io
-                        // events will already be emitted during processing
-                    } catch (error) {
-                        console.error(`Error starting recon: ${error.message}`);
-                        socket.emit('reconUpdate', {
-                            message: `Error starting reconnaissance: ${error.message}`
-                        });
-                    }
-                });
 
                 socket.on('disconnect', () => {
                     console.log('Client disconnected');
