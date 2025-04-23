@@ -530,6 +530,61 @@ fastify.get('/api/target/:email', async (request, reply) => {
     }
 });
 
+// API route to delete a target
+fastify.delete('/api/target/:email', async (request, reply) => {
+    const { email } = request.params;
+
+    try {
+        // First check if the target exists
+        const target = await db.get('SELECT * FROM Target WHERE email = ?', [email]);
+
+        if (!target) {
+            return {
+                success: false,
+                error: 'Target not found'
+            };
+        }
+
+        // Begin a transaction to ensure all related data is deleted properly
+        await db.run('BEGIN TRANSACTION');
+
+        try {
+            // First delete mapping entries
+            await db.run('DELETE FROM TargetSourceMap WHERE target_email = ?', [email]);
+
+            // Then delete any pretexts associated with this target
+            await db.run('DELETE FROM Pretext WHERE target_email = ?', [email]);
+
+            // Finally delete the target itself
+            await db.run('DELETE FROM Target WHERE email = ?', [email]);
+
+            // Commit the transaction
+            await db.run('COMMIT');
+
+            // Notify clients via Socket.io about the deletion
+            fastify.io.emit('targetDeleted', {
+                email,
+                domain: target.domain_name
+            });
+
+            return {
+                success: true,
+                message: `Target ${email} has been deleted`
+            };
+        } catch (error) {
+            // Rollback if any error occurs
+            await db.run('ROLLBACK');
+            throw error;
+        }
+    } catch (error) {
+        fastify.log.error(`Error deleting target ${email}: ${error.message}`);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+});
+
 // Start the server
 const start = async () => {
     try {

@@ -99,7 +99,8 @@
                                         <td class="px-4 py-2 whitespace-nowrap text-sm font-medium text-gray-900"
                                             x-text="target.name || 'Unknown'"></td>
                                         <td class="px-4 py-2 text-sm text-gray-500" x-text="target.email"></td>
-                                        <td class="px-4 py-2 text-sm text-gray-500" x-text="formatTenure(target.tenure_start)"></td>
+                                        <td class="px-4 py-2 text-sm text-gray-500"
+                                            x-text="formatTenure(target.tenure_start)"></td>
                                         <td class="px-4 py-2 text-sm">
                                             <span x-show="target.status === 'pending'"
                                                 class="px-2 py-1 text-xs rounded-full bg-yellow-100 text-yellow-800">Pending</span>
@@ -124,17 +125,29 @@
                 </div>
             </div>
 
-            <div x-show="selectedTarget" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+            <div x-show="selectedTarget"
+                class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40">
                 <div class="bg-white rounded-lg max-w-2xl w-full max-h-screen overflow-y-auto p-6">
                     <div class="flex justify-between items-center mb-4">
                         <h3 class="text-xl font-semibold" x-text="selectedTarget ? selectedTarget.name : ''"></h3>
-                        <button @click="selectedTarget = null" class="text-gray-500 hover:text-gray-700" title="Close">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
-                                stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                        </button>
+                        <div class="flex items-center">
+                            <button @click="deleteTarget()" class="text-red-500 hover:text-red-700 mr-4"
+                                title="Delete Target">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                            </button>
+                            <button @click="selectedTarget = null" class="text-gray-500 hover:text-gray-700"
+                                title="Close">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                        </div>
                     </div>
 
                     <div>
@@ -165,9 +178,9 @@
                                         </div>
                                         <p class="text-sm text-gray-500 mt-1">
                                             <span x-text="'Status: ' + source.status"></span>
-                                            <span x-if="source.data && source.data.extracted_on" 
-                                                  x-text="' | First seen: ' + formatDate(source.data.extracted_on)"
-                                                  class="ml-2"></span>
+                                            <span x-if="source.data && source.data.extracted_on"
+                                                x-text="' | First seen: ' + formatDate(source.data.extracted_on)"
+                                                class="ml-2"></span>
                                         </p>
                                     </li>
                                 </template>
@@ -177,6 +190,27 @@
                         <div x-show="selectedTargetSources.length === 0" class="text-center py-4 text-gray-500">
                             No sources found for this contact.
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Delete Confirmation Modal -->
+            <div x-show="showDeleteConfirmation"
+                class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                <div class="bg-white rounded-lg p-6 max-w-md w-full">
+                    <h3 class="text-xl font-semibold mb-4">Confirm Deletion</h3>
+                    <p class="mb-6">Are you sure you want to delete <span class="font-semibold"
+                            x-text="selectedTarget ? selectedTarget.email : ''"></span>? This action cannot be undone.
+                    </p>
+                    <div class="flex justify-end space-x-3">
+                        <button @click="showDeleteConfirmation = false"
+                            class="px-4 py-2 border border-gray-300 rounded hover:bg-gray-100">
+                            Cancel
+                        </button>
+                        <button @click="confirmDelete()"
+                            class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">
+                            Delete
+                        </button>
                     </div>
                 </div>
             </div>
@@ -210,6 +244,7 @@
                 socket: null,
                 selectedTarget: null,
                 selectedTargetSources: [],
+                showDeleteConfirmation: false,
 
                 init() {
                     // Extract domain name from URL
@@ -243,6 +278,13 @@
                     this.socket.on('domainUpdated', (data) => {
                         if (data.domain === this.domainName) {
                             this.loadDomainData(); // Refresh domain data
+                        }
+                    });
+
+                    this.socket.on('targetDeleted', (data) => {
+                        if (data.domain === this.domainName) {
+                            this.reconStatus.unshift(`Target ${data.email} has been deleted.`);
+                            this.loadTargets(); // Refresh targets list
                         }
                     });
                 },
@@ -291,7 +333,7 @@
 
                         if (data.success) {
                             this.selectedTarget = data.target;
-                            
+
                             // Parse the JSON data for each source if it's a string
                             this.selectedTargetSources = data.sources.map(source => {
                                 if (typeof source.data === 'string') {
@@ -311,26 +353,61 @@
                     }
                 },
 
+                deleteTarget() {
+                    this.showDeleteConfirmation = true;
+                },
+
+                async confirmDelete() {
+                    if (!this.selectedTarget) return;
+
+                    try {
+                        const email = this.selectedTarget.email;
+                        const response = await fetch(`/api/target/${encodeURIComponent(email)}`, {
+                            method: 'DELETE',
+                        });
+
+                        const data = await response.json();
+
+                        if (data.success) {
+                            // Close modals
+                            this.showDeleteConfirmation = false;
+                            this.selectedTarget = null;
+
+                            // Refresh targets list
+                            this.loadTargets();
+
+                            // Add status message
+                            this.reconStatus.unshift(`Target ${email} has been successfully deleted.`);
+                        } else {
+                            console.error('Error deleting target:', data.error);
+                            this.reconStatus.unshift(`Error deleting target: ${data.error}`);
+                        }
+                    } catch (error) {
+                        console.error('Error deleting target:', error);
+                        this.reconStatus.unshift(`Error deleting target: ${error.message}`);
+                    }
+                },
+
                 formatTenure(tenureDate, detailed = false) {
                     if (!tenureDate) return 'Unknown';
-                    
+
                     const date = new Date(tenureDate);
-                    
+
                     // Basic validation
                     if (isNaN(date.getTime())) return 'Unknown';
-                    
+
                     const now = new Date();
                     const years = now.getFullYear() - date.getFullYear();
                     const months = now.getMonth() - date.getMonth();
                     const totalMonths = (years * 12) + months;
-                    
+
                     // Format date for display
-                    const formattedDate = date.toLocaleDateString('en-US', { 
-                        year: 'numeric', 
-                        month: 'short', 
-                        day: 'numeric' 
+                    const formattedDate = date.toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric'
                     });
-                    
+
                     if (detailed) {
                         // For detailed view (in modal)
                         if (years > 0) {
@@ -350,16 +427,16 @@
 
                 formatDate(dateString) {
                     if (!dateString) return 'Unknown';
-                    
+
                     const date = new Date(dateString);
-                    
+
                     // Basic validation
                     if (isNaN(date.getTime())) return dateString; // Return the original string if invalid
-                    
-                    return date.toLocaleDateString('en-US', { 
-                        year: 'numeric', 
-                        month: 'short', 
-                        day: 'numeric' 
+
+                    return date.toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric'
                     });
                 }
             };
