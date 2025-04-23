@@ -23,7 +23,8 @@
 
         <div x-show="!loading && domainData">
             <header class="mb-8">
-                <h1 class="text-3xl font-bold text-gray-800" x-text="`Domain: ${domainData.name}`"></h1>
+                <h1 class="text-3xl font-bold text-gray-800" x-text="'Domain: ' + (domainData ? domainData.name : '')">
+                </h1>
                 <p class="text-gray-600">Details and target contacts</p>
             </header>
 
@@ -32,23 +33,27 @@
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <p class="text-sm text-gray-500">MX Records</p>
-                        <p class="text-gray-800 break-words" x-text="domainData.mx || 'None found'"></p>
+                        <p class="text-gray-800 break-words"
+                            x-text="domainData ? (domainData.mx || 'None found') : 'None found'"></p>
                     </div>
                     <div>
                         <p class="text-sm text-gray-500">SPF Record</p>
-                        <p class="text-gray-800 break-words" x-text="domainData.spf || 'None found'"></p>
+                        <p class="text-gray-800 break-words"
+                            x-text="domainData ? (domainData.spf || 'None found') : 'None found'"></p>
                     </div>
                     <div>
                         <p class="text-sm text-gray-500">DMARC Record</p>
-                        <p class="text-gray-800 break-words" x-text="domainData.dmarc || 'None found'"></p>
+                        <p class="text-gray-800 break-words"
+                            x-text="domainData ? (domainData.dmarc || 'None found') : 'None found'"></p>
                     </div>
                     <div>
                         <p class="text-sm text-gray-500">Email Format</p>
-                        <p class="text-gray-800" x-text="domainData.email_format || 'Unknown'"></p>
+                        <p class="text-gray-800"
+                            x-text="domainData ? (domainData.email_format || 'Unknown') : 'Unknown'"></p>
                     </div>
                 </div>
                 <div class="mt-4 flex flex-wrap gap-2">
-                    <button @click="startRecon(domainData.name)"
+                    <button @click="domainData ? startRecon(domainData.name) : null"
                         class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 focus:outline-none">
                         Start New Recon
                     </button>
@@ -286,6 +291,7 @@
                 selectedTarget: null,
                 selectedTargetSources: [],
                 showDeleteConfirmation: false,
+                expandedSourceId: null,
 
                 init() {
                     // Extract domain name from URL
@@ -297,48 +303,66 @@
 
                     // Load domain data
                     this.loadDomainData();
-
-                    // Load targets for this domain
-                    this.loadTargets();
                 },
 
                 connectSocket() {
                     this.socket = io();
 
                     this.socket.on('reconUpdate', (data) => {
-                        this.reconStatus.push(data.message);
+                        if (data && data.message) {
+                            this.reconStatus.push(data.message);
+                        }
                     });
 
                     this.socket.on('reconComplete', (data) => {
-                        if (data.domain === this.domainName) {
+                        if (data && data.domain === this.domainName) {
                             this.reconStatus.push(`Completed reconnaissance for ${data.domain}. Found ${data.targetsCount} potential contacts.`);
                             this.loadTargets(); // Refresh targets list
                         }
                     });
 
                     this.socket.on('domainUpdated', (data) => {
-                        if (data.domain === this.domainName) {
+                        if (data && data.domain === this.domainName) {
                             this.loadDomainData(); // Refresh domain data
                         }
                     });
 
                     this.socket.on('targetDeleted', (data) => {
-                        if (data.domain === this.domainName) {
+                        if (data && data.domain === this.domainName) {
                             this.reconStatus.unshift(`Target ${data.email} has been deleted.`);
                             this.loadTargets(); // Refresh targets list
+                        }
+                    });
+
+                    this.socket.on('sourceMined', (data) => {
+                        if (data && data.targetEmail) {
+                            this.reconStatus.unshift(`Source for ${data.targetEmail} has been mined.`);
+                            // Refresh target details if currently viewing
+                            if (this.selectedTarget && this.selectedTarget.email === data.targetEmail) {
+                                this.viewTargetDetails(data.targetEmail);
+                            }
+                            // Also refresh targets list to update status counts
+                            this.loadTargets();
                         }
                     });
                 },
 
                 async loadDomainData() {
                     try {
-                        const response = await fetch(`/api/domain/${this.domainName}`);
+                        const response = await fetch(`/api/domain/${encodeURIComponent(this.domainName)}`);
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+
                         const data = await response.json();
 
                         if (data.success && data.domain) {
                             this.domainData = data.domain;
+                            // After loading domain data, load targets
+                            this.loadTargets();
                         } else {
                             this.domainData = null;
+                            console.error('Domain data not found:', data.error || 'Unknown error');
                         }
                     } catch (error) {
                         console.error('Error loading domain data:', error);
@@ -349,39 +373,59 @@
                 },
 
                 async loadTargets() {
+                    if (!this.domainName || !this.domainData) return;
+
                     try {
-                        const response = await fetch(`/api/domain/${this.domainName}/targets`);
+                        const response = await fetch(`/api/domain/${encodeURIComponent(this.domainName)}/targets`);
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+
                         const data = await response.json();
 
                         if (data.success) {
-                            this.targets = data.targets;
+                            this.targets = data.targets || [];
+                        } else {
+                            console.error('Error loading targets:', data.error);
+                            this.targets = [];
                         }
                     } catch (error) {
                         console.error('Error loading targets:', error);
+                        this.targets = [];
                     }
                 },
 
                 startRecon(domain) {
+                    if (!domain) return;
+
                     this.reconStatus = [`Starting reconnaissance for ${domain}...`];
                     this.socket.emit('startRecon', { domain });
                 },
 
                 async viewTargetDetails(email) {
+                    if (!email) return;
+
                     try {
                         // Get target details
-                        const response = await fetch(`/api/target/${email}`);
+                        const response = await fetch(`/api/target/${encodeURIComponent(email)}`);
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+
                         const data = await response.json();
 
                         if (data.success) {
                             this.selectedTarget = data.target;
 
                             // Parse the JSON data for each source if it's a string
-                            this.selectedTargetSources = data.sources.map(source => {
-                                if (typeof source.data === 'string') {
+                            this.selectedTargetSources = (data.sources || []).map(source => {
+                                if (source.data && typeof source.data === 'string') {
                                     try {
                                         source.data = JSON.parse(source.data);
                                     } catch (e) {
                                         console.error('Error parsing source data JSON:', e);
+                                        // Keep the original string if parsing fails
+                                        source.data = { content: source.data };
                                     }
                                 }
                                 return source;
@@ -395,6 +439,7 @@
                 },
 
                 deleteTarget() {
+                    if (!this.selectedTarget) return;
                     this.showDeleteConfirmation = true;
                 },
 
@@ -406,6 +451,10 @@
                         const response = await fetch(`/api/target/${encodeURIComponent(email)}`, {
                             method: 'DELETE',
                         });
+
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
 
                         const data = await response.json();
 
@@ -480,6 +529,7 @@
                         day: 'numeric'
                     });
                 },
+
                 async scrapeSourcesForTarget(email) {
                     if (!email) return;
 
@@ -491,6 +541,10 @@
                             },
                             body: JSON.stringify({ targetEmails: [email] })
                         });
+
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
 
                         const data = await response.json();
 
@@ -523,6 +577,10 @@
                             },
                             body: JSON.stringify({ targetEmails })
                         });
+
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
 
                         const data = await response.json();
 
