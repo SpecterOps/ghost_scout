@@ -110,6 +110,11 @@ const setupDb = async () => {
     return db;
 };
 
+// favicon.ico route
+fastify.get('/favicon.ico', async (request, reply) => {
+    return reply.sendFile('images/favicon.ico');
+});
+
 // Setup routes
 fastify.get('/', async (request, reply) => {
     return reply.sendFile('pages/index.html');
