@@ -77,6 +77,10 @@
                                     </th>
                                     <th
                                         class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Tenure
+                                    </th>
+                                    <th
+                                        class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         Status
                                     </th>
                                     <th
@@ -95,6 +99,7 @@
                                         <td class="px-4 py-2 whitespace-nowrap text-sm font-medium text-gray-900"
                                             x-text="target.name || 'Unknown'"></td>
                                         <td class="px-4 py-2 text-sm text-gray-500" x-text="target.email"></td>
+                                        <td class="px-4 py-2 text-sm text-gray-500" x-text="formatTenure(target.tenure_start)"></td>
                                         <td class="px-4 py-2 text-sm">
                                             <span x-show="target.status === 'pending'"
                                                 class="px-2 py-1 text-xs rounded-full bg-yellow-100 text-yellow-800">Pending</span>
@@ -141,6 +146,11 @@
                             x-text="selectedTarget && selectedTarget.profile ? selectedTarget.profile : 'No profile information available'">
                         </p>
 
+                        <p class="text-sm text-gray-500">Tenure</p>
+                        <p class="text-gray-800 mb-4"
+                            x-text="selectedTarget ? formatTenure(selectedTarget.tenure_start, true) : ''">
+                        </p>
+
                         <div x-show="selectedTargetSources.length > 0">
                             <h4 class="font-medium mb-2">Sources</h4>
                             <ul class="space-y-2">
@@ -153,7 +163,12 @@
                                             <span x-text="source.discovery_method"
                                                 class="text-xs bg-gray-100 px-2 py-1 rounded ml-2"></span>
                                         </div>
-                                        <p class="text-sm text-gray-500 mt-1" x-text="'Status: ' + source.status"></p>
+                                        <p class="text-sm text-gray-500 mt-1">
+                                            <span x-text="'Status: ' + source.status"></span>
+                                            <span x-if="source.data && source.data.extracted_on" 
+                                                  x-text="' | First seen: ' + formatDate(source.data.extracted_on)"
+                                                  class="ml-2"></span>
+                                        </p>
                                     </li>
                                 </template>
                             </ul>
@@ -276,13 +291,76 @@
 
                         if (data.success) {
                             this.selectedTarget = data.target;
-                            this.selectedTargetSources = data.sources;
+                            
+                            // Parse the JSON data for each source if it's a string
+                            this.selectedTargetSources = data.sources.map(source => {
+                                if (typeof source.data === 'string') {
+                                    try {
+                                        source.data = JSON.parse(source.data);
+                                    } catch (e) {
+                                        console.error('Error parsing source data JSON:', e);
+                                    }
+                                }
+                                return source;
+                            });
                         } else {
                             console.error('Error loading target details:', data.error);
                         }
                     } catch (error) {
                         console.error('Error loading target details:', error);
                     }
+                },
+
+                formatTenure(tenureDate, detailed = false) {
+                    if (!tenureDate) return 'Unknown';
+                    
+                    const date = new Date(tenureDate);
+                    
+                    // Basic validation
+                    if (isNaN(date.getTime())) return 'Unknown';
+                    
+                    const now = new Date();
+                    const years = now.getFullYear() - date.getFullYear();
+                    const months = now.getMonth() - date.getMonth();
+                    const totalMonths = (years * 12) + months;
+                    
+                    // Format date for display
+                    const formattedDate = date.toLocaleDateString('en-US', { 
+                        year: 'numeric', 
+                        month: 'short', 
+                        day: 'numeric' 
+                    });
+                    
+                    if (detailed) {
+                        // For detailed view (in modal)
+                        if (years > 0) {
+                            return `${formattedDate} (${years} year${years !== 1 ? 's' : ''}, ${Math.abs(months)} month${Math.abs(months) !== 1 ? 's' : ''})`;
+                        } else {
+                            return `${formattedDate} (${Math.abs(totalMonths)} month${Math.abs(totalMonths) !== 1 ? 's' : ''})`;
+                        }
+                    } else {
+                        // For table view (more compact)
+                        if (years > 0) {
+                            return `${years}y ${Math.abs(months)}m`;
+                        } else {
+                            return `${Math.abs(totalMonths)}m`;
+                        }
+                    }
+                },
+
+                formatDate(dateString) {
+                    if (!dateString) return 'Unknown';
+                    
+                    const date = new Date(dateString);
+                    
+                    // Basic validation
+                    if (isNaN(date.getTime())) return dateString; // Return the original string if invalid
+                    
+                    return date.toLocaleDateString('en-US', { 
+                        year: 'numeric', 
+                        month: 'short', 
+                        day: 'numeric' 
+                    });
                 }
             };
         }

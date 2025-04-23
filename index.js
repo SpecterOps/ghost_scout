@@ -32,7 +32,6 @@ const setupDb = async () => {
         filename: './db/recon.db',
         driver: sqlite3.Database
     });
-
     // Create tables if they don't exist
     await db.exec(`
     CREATE TABLE IF NOT EXISTS Domain (
@@ -42,25 +41,37 @@ const setupDb = async () => {
       dmarc TEXT,
       email_format TEXT
     );
-   
+    
+    CREATE TABLE IF NOT EXISTS SourceDomain (
+      name TEXT PRIMARY KEY,
+      mx TEXT,
+      spf TEXT,
+      dmarc TEXT,
+      last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    
     CREATE TABLE IF NOT EXISTS Target (
       email TEXT PRIMARY KEY,
       name TEXT,
       profile TEXT,
       domain_name TEXT,
+      tenure_start TIMESTAMP,
       status TEXT DEFAULT 'pending', -- pending, enriched, failed
       FOREIGN KEY (domain_name) REFERENCES Domain(name)
     );
-   
+    
     CREATE TABLE IF NOT EXISTS SourceData (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       url TEXT UNIQUE NOT NULL,
+      source_domain_name TEXT,
       discovery_method TEXT NOT NULL,
       data TEXT,
       status TEXT DEFAULT 'pending', -- pending, mined, failed
       status_message TEXT,
       last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (source_domain_name) REFERENCES SourceDomain(name)
     );
     
     CREATE TABLE IF NOT EXISTS TargetSourceMap (
@@ -70,17 +81,29 @@ const setupDb = async () => {
       FOREIGN KEY (target_email) REFERENCES Target(email),
       FOREIGN KEY (source_id) REFERENCES SourceData(id)
     );
-   
+    
+    CREATE TABLE IF NOT EXISTS Prompt (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE NOT NULL,
+      template TEXT NOT NULL,
+      dos TEXT,
+      donts TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    
     CREATE TABLE IF NOT EXISTS Pretext (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       target_email TEXT,
-      prompt TEXT,
+      prompt_id INTEGER,
+      prompt_text TEXT NOT NULL,
       subject TEXT,
       body TEXT,
       link TEXT,
       status TEXT DEFAULT 'draft', -- draft, approved, rejected
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (target_email) REFERENCES Target(email)
+      FOREIGN KEY (target_email) REFERENCES Target(email),
+      FOREIGN KEY (prompt_id) REFERENCES Prompt(id)
     );
   `);
     return db;
@@ -285,21 +308,39 @@ async function processHunterResults(domain, hunterData) {
 
             // Process each email
             for (const email of hunterData.data.emails) {
+                // Find the earliest extraction date for tenure calculation
+                let earliestExtraction = null;
+
+                if (email.sources && email.sources.length > 0) {
+                    // Sort sources by extraction date to find earliest
+                    const sortedSources = [...email.sources].sort((a, b) =>
+                        new Date(a.extracted_on) - new Date(b.extracted_on)
+                    );
+
+                    earliestExtraction = sortedSources[0].extracted_on;
+                }
+
+                // Convert to timestamp format for database
+                const tenureStart = earliestExtraction ? new Date(earliestExtraction).toISOString() : null;
+
                 await db.run(
-                    `INSERT INTO Target (email, name, domain_name, status) 
-                    VALUES (?, ?, ?, ?) 
+                    `INSERT INTO Target (email, name, domain_name, status, tenure_start) 
+                    VALUES (?, ?, ?, ?, ?) 
                     ON CONFLICT(email) DO UPDATE SET 
                     name = ?, 
                     domain_name = ?, 
-                    status = ?`,
+                    status = ?,
+                    tenure_start = COALESCE(?, tenure_start)`,
                     [
                         email.value,
                         `${email.first_name} ${email.last_name}`,
                         domain,
                         'pending',
+                        tenureStart,
                         `${email.first_name} ${email.last_name}`,
                         domain,
-                        'pending'
+                        'pending',
+                        tenureStart
                     ]
                 );
 
@@ -308,6 +349,13 @@ async function processHunterResults(domain, hunterData) {
                     for (const source of email.sources) {
                         // Check if this is a LinkedIn source via Google Search
                         let sourceUrl = source.uri;
+
+                        // First ensure the source domain exists in our DB
+                        const sourceDomain = new URL(source.uri).hostname;
+                        await db.run(
+                            'INSERT OR IGNORE INTO SourceDomain (name) VALUES (?)',
+                            [source.domain]
+                        );
 
                         // Special case for LinkedIn: use the profile URL instead of Google search URL
                         if (source.domain === 'linkedin.com' &&
@@ -323,13 +371,13 @@ async function processHunterResults(domain, hunterData) {
 
                         let sourceResult = await db.run(
                             `INSERT OR IGNORE INTO SourceData 
-                            (url, discovery_method, data, status) 
-                            VALUES (?, ?, ?, ?)`,
+                            (url, source_domain_name, discovery_method, data, status) 
+                            VALUES (?, ?, ?, ?, ?)`,
                             [
                                 sourceUrl,
+                                source.domain,
                                 'hunter.io',
                                 JSON.stringify({
-                                    domain: source.domain,
                                     extracted_on: source.extracted_on,
                                     last_seen_on: source.last_seen_on,
                                     still_on_page: source.still_on_page,
@@ -371,7 +419,7 @@ async function processHunterResults(domain, hunterData) {
 
                 // Emit progress update
                 fastify.io.emit('reconUpdate', {
-                    message: `Processed contact: ${email.first_name} ${email.last_name} (${email.value})`
+                    message: `Processed contact: ${email.first_name} ${email.last_name} (${email.value}) with tenure starting ${tenureStart || 'unknown'}`
                 });
             }
         }
