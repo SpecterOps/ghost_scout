@@ -119,6 +119,8 @@
                                                 class="px-2 py-1 text-xs rounded-full bg-yellow-100 text-yellow-800">Pending</span>
                                             <span x-show="target.status === 'enriched'"
                                                 class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">Enriched</span>
+                                            <span x-show="target.status === 'complete'"
+                                                class="px-2 py-1 text-xs rounded-full bg-purple-100 text-purple-800">Complete</span>
                                             <span x-show="target.status === 'failed'"
                                                 class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800">Failed</span>
                                         </td>
@@ -130,7 +132,8 @@
                                                 View Details
                                             </button>
                                             <button @click="scrapeSourcesForTarget(target.email)"
-                                                class="text-green-500 hover:text-green-700">
+                                                class="text-green-500 hover:text-green-700"
+                                                x-show="target.status !== 'complete'">
                                                 Scrape Sources
                                             </button>
                                             <button x-show="target.status === 'enriched'"
@@ -154,7 +157,8 @@
                         <h3 class="text-xl font-semibold" x-text="selectedTarget ? selectedTarget.name : ''"></h3>
                         <div class="flex items-center">
                             <button @click="scrapeSourcesForTarget(selectedTarget ? selectedTarget.email : '')"
-                                class="text-green-500 hover:text-green-700 mr-4" title="Scrape Sources">
+                                class="text-green-500 hover:text-green-700 mr-4" title="Scrape Sources"
+                                x-show="selectedTarget && selectedTarget.status !== 'complete'">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
                                     stroke="currentColor">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -192,6 +196,20 @@
                     <div>
                         <p class="text-sm text-gray-500">Email</p>
                         <p class="text-gray-800 mb-4" x-text="selectedTarget ? selectedTarget.email : ''"></p>
+
+                        <div x-show="selectedTarget && selectedTarget.status">
+                            <p class="text-sm text-gray-500">Status</p>
+                            <p class="text-gray-800 mb-4">
+                                <span x-show="selectedTarget && selectedTarget.status === 'pending'"
+                                    class="px-2 py-1 text-xs rounded-full bg-yellow-100 text-yellow-800">Pending</span>
+                                <span x-show="selectedTarget && selectedTarget.status === 'enriched'"
+                                    class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">Enriched</span>
+                                <span x-show="selectedTarget && selectedTarget.status === 'complete'"
+                                    class="px-2 py-1 text-xs rounded-full bg-purple-100 text-purple-800">Complete</span>
+                                <span x-show="selectedTarget && selectedTarget.status === 'failed'"
+                                    class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800">Failed</span>
+                            </p>
+                        </div>
 
                         <p class="text-sm text-gray-500">Profile</p>
                         <div class="text-gray-800 mb-4 whitespace-pre-line"
@@ -677,6 +695,7 @@
                         this.expandedSourceId = sourceId;
                     }
                 },
+
                 async generateProfile(email) {
                     if (!email) return;
 
