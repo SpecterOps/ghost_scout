@@ -29,11 +29,6 @@
 
             <div class="mb-6 flex justify-between items-center">
                 <div class="flex gap-2">
-                    <button @click="filterPretexts('all')"
-                        :class="{'bg-blue-500 text-white': filterStatus === 'all', 'bg-gray-200 text-gray-700': filterStatus !== 'all'}"
-                        class="px-4 py-2 rounded">
-                        All (<span x-text="pretexts.length"></span>)
-                    </button>
                     <button @click="filterPretexts('draft')"
                         :class="{'bg-yellow-500 text-white': filterStatus === 'draft', 'bg-gray-200 text-gray-700': filterStatus !== 'draft'}"
                         class="px-4 py-2 rounded">
@@ -48,6 +43,11 @@
                         :class="{'bg-red-500 text-white': filterStatus === 'rejected', 'bg-gray-200 text-gray-700': filterStatus !== 'rejected'}"
                         class="px-4 py-2 rounded">
                         Rejected (<span x-text="pretexts.filter(p => p.status === 'rejected').length"></span>)
+                    </button>
+                    <button @click="filterPretexts('all')"
+                        :class="{'bg-blue-500 text-white': filterStatus === 'all', 'bg-gray-200 text-gray-700': filterStatus !== 'all'}"
+                        class="px-4 py-2 rounded">
+                        All (<span x-text="pretexts.length"></span>)
                     </button>
                 </div>
                 <div>
@@ -91,8 +91,6 @@
                                     <span class="text-sm text-gray-500" x-text="formatDate(pretext.created_at)"></span>
                                 </div>
                             </div>
-
-
 
                             <div class="mb-4">
                                 <p class="text-sm text-gray-500">Subject</p>
@@ -199,7 +197,7 @@
                 pretexts: [],
                 filteredPretexts: [],
                 loading: true,
-                filterStatus: 'all',
+                filterStatus: 'draft', // Changed default to 'draft'
                 sortOption: 'newest',
                 socket: null,
                 showPromptModal: false,
