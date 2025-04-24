@@ -1025,6 +1025,69 @@ fastify.get('/api/target/:email/pretexts', async (request, reply) => {
     }
 });
 
+// Route to serve the pretexts page
+fastify.get('/pretexts/:domain', async (request, reply) => {
+    return reply.sendFile('pages/pretexts.html');
+});
+
+// API route to update pretext status
+fastify.put('/api/pretext/:id/status', async (request, reply) => {
+    const { id } = request.params;
+    const { status } = request.body;
+
+    if (!id || !status) {
+        return reply.code(400).send({
+            success: false,
+            error: 'Pretext ID and status are required'
+        });
+    }
+
+    // Validate status value
+    const validStatuses = ['draft', 'approved', 'rejected'];
+    if (!validStatuses.includes(status)) {
+        return reply.code(400).send({
+            success: false,
+            error: 'Invalid status. Must be one of: draft, approved, rejected'
+        });
+    }
+
+    try {
+        // Check if the pretext exists
+        const pretext = await db.get('SELECT * FROM Pretext WHERE id = ?', [id]);
+
+        if (!pretext) {
+            return reply.code(404).send({
+                success: false,
+                error: 'Pretext not found'
+            });
+        }
+
+        // Update the pretext status
+        await db.run(
+            'UPDATE Pretext SET status = ? WHERE id = ?',
+            [status, id]
+        );
+
+        // Notify clients about the status update
+        fastify.io.emit('pretextStatusUpdated', {
+            id: parseInt(id),
+            status: status
+        });
+
+        return {
+            success: true,
+            id: parseInt(id),
+            status: status
+        };
+    } catch (error) {
+        fastify.log.error(`Error updating pretext status: ${error.message}`);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+});
+
 // Start the server
 const start = async () => {
     try {

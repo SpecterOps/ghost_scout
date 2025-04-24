@@ -6,3 +6,82 @@ body {
 .container {
     max-width: 1200px;
 }
+
+/* Styling for pretext cards */
+.pretext-card {
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.pretext-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+/* Better whitespace handling for email body */
+.email-body {
+    white-space: pre-line;
+    line-height: 1.6;
+}
+
+/* Status indicators */
+.status-badge {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: capitalize;
+}
+
+.status-badge.draft {
+    background-color: #fef3c7;
+    color: #92400e;
+}
+
+.status-badge.approved {
+    background-color: #d1fae5;
+    color: #065f46;
+}
+
+.status-badge.rejected {
+    background-color: #fee2e2;
+    color: #b91c1c;
+}
+
+/* Toast notification */
+.toast-notification {
+    position: fixed;
+    bottom: 1rem;
+    right: 1rem;
+    padding: 0.75rem 1.5rem;
+    background-color: #3b82f6;
+    color: white;
+    border-radius: 0.375rem;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    z-index: 50;
+}
+
+/* Animation for pretext filter transitions */
+.pretext-transition {
+    transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
+}
+
+.pretext-enter {
+    opacity: 0;
+    transform: translateY(10px);
+}
+
+.pretext-enter-to {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.pretext-leave {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.pretext-leave-to {
+    opacity: 0;
+    transform: translateY(-10px);
+}

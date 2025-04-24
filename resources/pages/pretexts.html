@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Domain Pretexts - Lead Reconnaissance Tool</title>
+    <script src="/resources/js/alpine.min.js" defer></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <link href="/resources/css/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/resources/css/main.css">
+</head>
+
+<body class="bg-gray-100">
+    <div class="container mx-auto px-4 py-8" x-data="pretextsApp()">
+        <nav class="mb-6">
+            <a :href="'/domain/' + domainName" class="text-blue-500 hover:text-blue-700">← Back to Domain Details</a>
+        </nav>
+
+        <div x-show="loading" class="flex justify-center items-center py-12">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+        </div>
+
+        <div x-show="!loading">
+            <header class="mb-8">
+                <h1 class="text-3xl font-bold text-gray-800" x-text="'Pretexts for Domain: ' + domainName"></h1>
+                <p class="text-gray-600">Generated sales outreach messages for targets</p>
+            </header>
+
+            <div class="mb-6 flex justify-between items-center">
+                <div class="flex gap-2">
+                    <button @click="filterPretexts('all')"
+                        :class="{'bg-blue-500 text-white': filterStatus === 'all', 'bg-gray-200 text-gray-700': filterStatus !== 'all'}"
+                        class="px-4 py-2 rounded">
+                        All (<span x-text="pretexts.length"></span>)
+                    </button>
+                    <button @click="filterPretexts('draft')"
+                        :class="{'bg-yellow-500 text-white': filterStatus === 'draft', 'bg-gray-200 text-gray-700': filterStatus !== 'draft'}"
+                        class="px-4 py-2 rounded">
+                        Drafts (<span x-text="pretexts.filter(p => p.status === 'draft').length"></span>)
+                    </button>
+                    <button @click="filterPretexts('approved')"
+                        :class="{'bg-green-500 text-white': filterStatus === 'approved', 'bg-gray-200 text-gray-700': filterStatus !== 'approved'}"
+                        class="px-4 py-2 rounded">
+                        Approved (<span x-text="pretexts.filter(p => p.status === 'approved').length"></span>)
+                    </button>
+                    <button @click="filterPretexts('rejected')"
+                        :class="{'bg-red-500 text-white': filterStatus === 'rejected', 'bg-gray-200 text-gray-700': filterStatus !== 'rejected'}"
+                        class="px-4 py-2 rounded">
+                        Rejected (<span x-text="pretexts.filter(p => p.status === 'rejected').length"></span>)
+                    </button>
+                </div>
+                <div>
+                    <label for="sortOption" class="sr-only">Sort Options</label>
+                    <select id="sortOption" x-model="sortOption" @change="sortPretexts()" class="border rounded p-2">
+                        <option value="newest">Newest First</option>
+                        <option value="oldest">Oldest First</option>
+                        <option value="targetName">Target Name</option>
+                        <option value="templateName">Template Name</option>
+                    </select>
+                </div>
+            </div>
+
+            <div x-show="filteredPretexts.length === 0" class="bg-white shadow rounded-lg p-6 text-center">
+                <p class="text-gray-700">No pretexts found for this domain with the selected filter.</p>
+            </div>
+
+            <div x-show="filteredPretexts.length > 0" class="space-y-6">
+                <template x-for="pretext in filteredPretexts" :key="pretext.id">
+                    <div class="bg-white shadow rounded-lg overflow-hidden">
+                        <div class="p-6">
+                            <div class="flex justify-between items-start mb-4">
+                                <div>
+                                    <h2 class="text-xl font-semibold" x-text="pretext.target_name || 'Unknown Target'">
+                                    </h2>
+                                    <p class="text-gray-500" x-text="pretext.target_email"></p>
+                                </div>
+                                <div class="flex items-center">
+                                    <span x-show="pretext.status === 'draft'"
+                                        class="px-3 py-1 text-xs rounded-full bg-yellow-100 text-yellow-800 mr-2">
+                                        Draft
+                                    </span>
+                                    <span x-show="pretext.status === 'approved'"
+                                        class="px-3 py-1 text-xs rounded-full bg-green-100 text-green-800 mr-2">
+                                        Approved
+                                    </span>
+                                    <span x-show="pretext.status === 'rejected'"
+                                        class="px-3 py-1 text-xs rounded-full bg-red-100 text-red-800 mr-2">
+                                        Rejected
+                                    </span>
+                                    <span class="text-sm text-gray-500" x-text="formatDate(pretext.created_at)"></span>
+                                </div>
+                            </div>
+
+
+
+                            <div class="mb-4">
+                                <p class="text-sm text-gray-500">Subject</p>
+                                <p class="text-gray-800 font-medium" x-text="pretext.subject || 'No subject'"></p>
+                            </div>
+
+                            <div class="mb-4">
+                                <p class="text-sm text-gray-500">Message Body</p>
+                                <div class="p-4 bg-gray-50 rounded mt-2 whitespace-pre-line"
+                                    x-text="pretext.body || 'No message body'"></div>
+                            </div>
+
+                            <div x-show="pretext.link" class="mb-4">
+                                <p class="text-sm text-gray-500">Tracking Link</p>
+                                <a :href="pretext.link" target="_blank"
+                                    class="text-blue-500 hover:text-blue-700 break-all" x-text="pretext.link"></a>
+                            </div>
+                            <!-- Template info moved to collapsible section -->
+                            <div class="mb-4 text-right">
+                                <button @click="toggleTemplateInfo(pretext.id)"
+                                    class="text-blue-500 hover:text-blue-700 text-sm inline-flex items-center">
+                                    <span
+                                        x-text="isTemplateVisible(pretext.id) ? 'Hide Template Info' : 'Show Template Info'"></span>
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 ml-1" fill="none"
+                                        viewBox="0 0 24 24" stroke="currentColor"
+                                        :class="{'transform rotate-180': isTemplateVisible(pretext.id)}">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <!-- Collapsible template section -->
+                            <div x-show="isTemplateVisible(pretext.id)"
+                                x-transition:enter="transition ease-out duration-200"
+                                x-transition:enter-start="opacity-0 transform -translate-y-2"
+                                x-transition:enter-end="opacity-100 transform translate-y-0"
+                                class="mb-4 p-3 bg-gray-50 rounded-md">
+                                <p class="text-sm text-gray-500">Template</p>
+                                <p class="text-gray-700" x-text="pretext.prompt_name || 'Unknown Template'"></p>
+                            </div>
+
+                            <div class="flex space-x-2 mt-6">
+                                <button @click="updatePretextStatus(pretext.id, 'approved')"
+                                    x-show="pretext.status !== 'approved'"
+                                    class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded">
+                                    Approve
+                                </button>
+                                <button @click="updatePretextStatus(pretext.id, 'rejected')"
+                                    x-show="pretext.status !== 'rejected'"
+                                    class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded">
+                                    Reject
+                                </button>
+                                <button @click="viewPromptText(pretext)"
+                                    class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded">
+                                    View Prompt
+                                </button>
+                                <button @click="copyToClipboard(pretext)"
+                                    class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded">
+                                    Copy to Clipboard
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Prompt Text Modal -->
+        <div x-show="showPromptModal"
+            class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white rounded-lg p-6 max-w-2xl w-full max-h-screen overflow-y-auto">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-xl font-semibold">Prompt Used</h3>
+                    <button @click="showPromptModal = false" class="text-gray-500 hover:text-gray-700"
+                        title="Close Prompt Modal">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                            stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="bg-gray-50 p-4 rounded whitespace-pre-line" x-text="selectedPromptText"></div>
+            </div>
+        </div>
+
+        <!-- Status message toast -->
+        <div x-show="statusMessage" x-transition:enter="transition ease-out duration-300"
+            x-transition:enter-start="opacity-0 transform translate-y-2"
+            x-transition:enter-end="opacity-100 transform translate-y-0"
+            x-transition:leave="transition ease-in duration-200"
+            x-transition:leave-start="opacity-100 transform translate-y-0"
+            x-transition:leave-end="opacity-0 transform translate-y-2"
+            class="fixed bottom-4 right-4 bg-blue-500 text-white px-6 py-3 rounded shadow-lg">
+            <span x-text="statusMessage"></span>
+        </div>
+    </div>
+
+    <script>
+        function pretextsApp() {
+            return {
+                domainName: '',
+                pretexts: [],
+                filteredPretexts: [],
+                loading: true,
+                filterStatus: 'all',
+                sortOption: 'newest',
+                socket: null,
+                showPromptModal: false,
+                selectedPromptText: '',
+                statusMessage: '',
+                visibleTemplates: {}, // Track which templates are visible
+
+                init() {
+                    // Extract domain name from URL
+                    const urlParts = window.location.pathname.split('/');
+                    this.domainName = urlParts[urlParts.length - 1];
+
+                    // Connect socket for real-time updates
+                    this.connectSocket();
+
+                    // Load pretexts data
+                    this.loadPretexts();
+                },
+
+                connectSocket() {
+                    this.socket = io();
+
+                    this.socket.on('pretextGenerated', (data) => {
+                        if (data && data.domain === this.domainName) {
+                            // Refresh the pretext list when a new one is generated
+                            this.loadPretexts();
+                        }
+                    });
+
+                    this.socket.on('pretextStatusUpdated', (data) => {
+                        if (data && data.id) {
+                            // Update the pretext status in our local list
+                            const index = this.pretexts.findIndex(p => p.id === data.id);
+                            if (index !== -1) {
+                                this.pretexts[index].status = data.status;
+                                // Re-apply filters
+                                this.filterPretexts(this.filterStatus);
+                            }
+                        }
+                    });
+                },
+
+                async loadPretexts() {
+                    try {
+                        const response = await fetch(`/api/domain/${encodeURIComponent(this.domainName)}/pretexts`);
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+
+                        const data = await response.json();
+
+                        if (data.success) {
+                            this.pretexts = data.pretexts || [];
+                            this.filterPretexts(this.filterStatus);
+                        } else {
+                            console.error('Error loading pretexts:', data.error);
+                            this.pretexts = [];
+                            this.filteredPretexts = [];
+                        }
+                    } catch (error) {
+                        console.error('Error loading pretexts:', error);
+                        this.pretexts = [];
+                        this.filteredPretexts = [];
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                filterPretexts(status) {
+                    if (status) {
+                        this.filterStatus = status;
+                    }
+
+                    if (this.filterStatus === 'all') {
+                        this.filteredPretexts = [...this.pretexts];
+                    } else {
+                        this.filteredPretexts = this.pretexts.filter(pretext => pretext.status === this.filterStatus);
+                    }
+
+                    // Apply current sort
+                    this.sortPretexts();
+                },
+
+                sortPretexts() {
+                    switch (this.sortOption) {
+                        case 'newest':
+                            this.filteredPretexts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+                            break;
+                        case 'oldest':
+                            this.filteredPretexts.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+                            break;
+                        case 'targetName':
+                            this.filteredPretexts.sort((a, b) => (a.target_name || '').localeCompare(b.target_name || ''));
+                            break;
+                        case 'templateName':
+                            this.filteredPretexts.sort((a, b) => (a.prompt_name || '').localeCompare(b.prompt_name || ''));
+                            break;
+                    }
+                },
+
+                formatDate(dateString) {
+                    if (!dateString) return 'Unknown date';
+
+                    const date = new Date(dateString);
+                    if (isNaN(date.getTime())) return dateString;
+
+                    return date.toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    });
+                },
+
+                async updatePretextStatus(pretextId, newStatus) {
+                    try {
+                        const response = await fetch(`/api/pretext/${pretextId}/status`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ status: newStatus })
+                        });
+
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+
+                        const data = await response.json();
+
+                        if (data.success) {
+                            // Update the pretext status in our local list
+                            const index = this.pretexts.findIndex(p => p.id === pretextId);
+                            if (index !== -1) {
+                                this.pretexts[index].status = newStatus;
+                                // Re-apply filters
+                                this.filterPretexts(this.filterStatus);
+                            }
+
+                            // Show toast message
+                            this.showStatusMessage(`Pretext status updated to ${newStatus}`);
+                        } else {
+                            console.error('Error updating pretext status:', data.error);
+                            this.showStatusMessage(`Error: ${data.error}`);
+                        }
+                    } catch (error) {
+                        console.error('Error updating pretext status:', error);
+                        this.showStatusMessage(`Error: ${error.message}`);
+                    }
+                },
+
+                viewPromptText(pretext) {
+                    if (pretext && pretext.prompt_text) {
+                        this.selectedPromptText = pretext.prompt_text;
+                        this.showPromptModal = true;
+                    } else {
+                        this.showStatusMessage('Prompt text not available');
+                    }
+                },
+
+                copyToClipboard(pretext) {
+                    if (!pretext) return;
+
+                    const text = `Subject: ${pretext.subject || 'No subject'}\n\n${pretext.body || 'No message body'}`;
+
+                    navigator.clipboard.writeText(text)
+                        .then(() => {
+                            this.showStatusMessage('Copied to clipboard');
+                        })
+                        .catch(err => {
+                            console.error('Could not copy text: ', err);
+                            this.showStatusMessage('Failed to copy to clipboard');
+                        });
+                },
+
+                showStatusMessage(message) {
+                    this.statusMessage = message;
+                    setTimeout(() => {
+                        this.statusMessage = '';
+                    }, 3000);
+                },
+
+                // New methods for template visibility
+                toggleTemplateInfo(pretextId) {
+                    this.visibleTemplates[pretextId] = !this.isTemplateVisible(pretextId);
+                },
+
+                isTemplateVisible(pretextId) {
+                    return !!this.visibleTemplates[pretextId];
+                }
+            };
+        }
+    </script>
+</body>
+
+</html>
