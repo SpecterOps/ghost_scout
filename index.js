@@ -5,6 +5,7 @@ const fs = require('fs');
 require('dotenv').config();
 const sqlite3 = require('sqlite3');
 const { open } = require('sqlite');
+const yaml = require('js-yaml');
 // Import DNS queue module
 const dnsQueue = require('./lib/dnsQueue');
 // Import the autodiscover service
@@ -12,6 +13,7 @@ const autodiscoverService = require('./lib/autodiscover');
 const hunterService = require('./lib/hunterService');
 const sourceQueue = require('./lib/sourceQueue');
 const profileQueue = require('./lib/profileQueue');
+const pretextQueue = require('./lib/pretextQueue');
 
 // Ensure db directory exists
 if (!fs.existsSync('./db')) {
@@ -26,6 +28,70 @@ fastify.register(require('@fastify/static'), {
 
 // Register Fastify Socket.io plugin
 fastify.register(require('fastify-socket.io'));
+
+async function loadDefaultPrompts() {
+    try {
+        const promptLibraryDir = path.join(__dirname, 'prompt_library');
+
+        // Check if prompt_library directory exists
+        if (!fs.existsSync(promptLibraryDir)) {
+            console.log('Prompt library directory does not exist, creating it...');
+            fs.mkdirSync(promptLibraryDir, { recursive: true });
+            return; // Exit if no directory (likely first run)
+        }
+
+        // Read all YAML files in the prompt_library directory
+        const files = fs.readdirSync(promptLibraryDir);
+        const yamlFiles = files.filter(file => file.endsWith('.yaml') || file.endsWith('.yml'));
+
+        if (yamlFiles.length === 0) {
+            console.log('No prompt templates found in prompt_library');
+            return;
+        }
+
+        console.log(`Found ${yamlFiles.length} prompt templates`);
+
+        // Process each YAML file
+        for (const file of yamlFiles) {
+            const filePath = path.join(promptLibraryDir, file);
+            const fileContent = fs.readFileSync(filePath, 'utf8');
+
+            try {
+                // Parse YAML content
+                const promptData = yaml.load(fileContent);
+
+                // Check if this prompt already exists in the database
+                const existingPrompt = await db.get('SELECT id FROM Prompt WHERE name = ?', [promptData.name]);
+
+                if (existingPrompt) {
+                    console.log(`Prompt "${promptData.name}" already exists, skipping`);
+                    continue;
+                }
+
+                // Insert new prompt into the database
+                await db.run(
+                    `INSERT INTO Prompt (name, template, system_prompt, dos, donts, created_at, updated_at) 
+                     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+                    [
+                        promptData.name,
+                        promptData.template,
+                        promptData.system_prompt || '',
+                        promptData.dos || '',
+                        promptData.donts || ''
+                    ]
+                );
+
+                console.log(`Inserted prompt template: ${promptData.name}`);
+            } catch (error) {
+                console.error(`Error loading prompt from ${file}:`, error.message);
+            }
+        }
+
+        console.log('Finished loading prompt templates');
+    } catch (error) {
+        console.error('Error loading default prompts:', error.message);
+    }
+}
 
 // Setup database connection
 let db;
@@ -88,6 +154,7 @@ const setupDb = async () => {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT UNIQUE NOT NULL,
       template TEXT NOT NULL,
+      system_prompt TEXT,
       dos TEXT,
       donts TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -108,6 +175,8 @@ const setupDb = async () => {
       FOREIGN KEY (prompt_id) REFERENCES Prompt(id)
     );
   `);
+    // Load and insert default prompts
+    await loadDefaultPrompts();
     return db;
 };
 
@@ -752,6 +821,210 @@ fastify.post('/api/targets/generate-profiles', async (request, reply) => {
     }
 });
 
+// API route to get all available prompts 
+fastify.get('/api/prompts', async (request, reply) => {
+    try {
+        const prompts = await db.all('SELECT id, name FROM Prompt ORDER BY name');
+        return { success: true, prompts };
+    } catch (error) {
+        fastify.log.error(error);
+        return { success: false, error: error.message };
+    }
+});
+
+// API route to get a specific prompt by ID
+fastify.get('/api/prompt/:id', async (request, reply) => {
+    const { id } = request.params;
+
+    try {
+        const prompt = await db.get('SELECT * FROM Prompt WHERE id = ?', [id]);
+
+        if (!prompt) {
+            return {
+                success: false,
+                error: 'Prompt not found'
+            };
+        }
+
+        return { success: true, prompt };
+    } catch (error) {
+        fastify.log.error(error);
+        return { success: false, error: error.message };
+    }
+});
+
+// API route to generate pretext for a single target
+fastify.post('/api/target/generate-pretext', async (request, reply) => {
+    const { email, promptId } = request.body;
+
+    if (!email || !promptId) {
+        return reply.code(400).send({
+            success: false,
+            error: 'Email and promptId are required'
+        });
+    }
+
+    try {
+        // Check if the target exists and is in the complete state
+        const target = await db.get('SELECT * FROM Target WHERE email = ?', [email]);
+
+        if (!target) {
+            return reply.code(404).send({
+                success: false,
+                error: 'Target not found'
+            });
+        }
+
+        if (target.status !== 'complete') {
+            return reply.code(400).send({
+                success: false,
+                error: `Target status is ${target.status}, not complete`
+            });
+        }
+
+        // Queue the pretext generation
+        const result = await pretextQueue.queuePretextGeneration(email, promptId);
+
+        return {
+            success: true,
+            email,
+            promptId,
+            jobId: result.jobId
+        };
+    } catch (error) {
+        fastify.log.error(`Error queueing pretext generation for ${email}: ${error.message}`);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+});
+
+// API route to generate pretexts for multiple targets
+fastify.post('/api/targets/generate-pretexts', async (request, reply) => {
+    const { targetEmails, promptId, domainName } = request.body;
+
+    if (!Array.isArray(targetEmails) || targetEmails.length === 0) {
+        return reply.code(400).send({
+            success: false,
+            error: 'targetEmails must be a non-empty array'
+        });
+    }
+
+    if (!promptId) {
+        return reply.code(400).send({
+            success: false,
+            error: 'promptId is required'
+        });
+    }
+
+    if (!domainName) {
+        return reply.code(400).send({
+            success: false,
+            error: 'domainName is required'
+        });
+    }
+
+    try {
+        // Get all targets with complete status from the provided emails
+        const completeTargets = await Promise.all(
+            targetEmails.map(async (email) => {
+                const target = await db.get('SELECT * FROM Target WHERE email = ? AND status = ?', [email, 'complete']);
+                return target;
+            })
+        );
+
+        // Filter out any null values (targets that don't exist or aren't complete)
+        const validTargets = completeTargets.filter(target => target !== null);
+
+        if (validTargets.length === 0) {
+            return reply.code(400).send({
+                success: false,
+                error: 'No valid complete targets found'
+            });
+        }
+
+        // Queue pretext generation for all valid targets
+        const result = await pretextQueue.queuePretextsForTargets(
+            validTargets.map(target => target.email),
+            promptId,
+            domainName
+        );
+
+        // Notify clients that pretext generation has been queued
+        fastify.io.emit('reconUpdate', {
+            message: `Queued pretext generation for ${result.count} targets in ${domainName}`
+        });
+
+        return {
+            success: true,
+            count: result.count,
+            domain: domainName
+        };
+    } catch (error) {
+        fastify.log.error(`Error queueing pretext generation for multiple targets: ${error.message}`);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+});
+
+// API route to get all pretexts for a domain
+fastify.get('/api/domain/:domain/pretexts', async (request, reply) => {
+    const { domain } = request.params;
+
+    try {
+        // Get all pretexts for targets in this domain
+        const pretexts = await db.all(`
+            SELECT p.*, t.name as target_name, pr.name as prompt_name
+            FROM Pretext p
+            JOIN Target t ON p.target_email = t.email
+            JOIN Prompt pr ON p.prompt_id = pr.id
+            WHERE t.domain_name = ?
+            ORDER BY p.created_at DESC
+        `, [domain]);
+
+        return {
+            success: true,
+            pretexts
+        };
+    } catch (error) {
+        fastify.log.error(error);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+});
+
+// API route to get pretexts for a specific target
+fastify.get('/api/target/:email/pretexts', async (request, reply) => {
+    const { email } = request.params;
+
+    try {
+        // Get all pretexts for this target
+        const pretexts = await db.all(`
+            SELECT p.*, pr.name as prompt_name
+            FROM Pretext p
+            JOIN Prompt pr ON p.prompt_id = pr.id
+            WHERE p.target_email = ?
+            ORDER BY p.created_at DESC
+        `, [email]);
+
+        return {
+            success: true,
+            pretexts
+        };
+    } catch (error) {
+        fastify.log.error(error);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+});
+
 // Start the server
 const start = async () => {
     try {
@@ -769,6 +1042,9 @@ const start = async () => {
 
             // Initialize the profile queue processor with db and io
             profileQueue.initProfileQueueProcessor(db, fastify.io);
+
+            // Initialize the pretext queue processor with db and io
+            pretextQueue.initPretextQueueProcessor(db, fastify.io);
 
             fastify.io.on('connection', (socket) => {
                 console.log('Client connected');

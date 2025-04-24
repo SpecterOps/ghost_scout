@@ -65,6 +65,21 @@
                         class="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-700 focus:outline-none">
                         Generate All Profiles
                     </button>
+                    <button @click="generateAllPretexts()"
+                        class="bg-indigo-500 text-white px-4 py-2 rounded hover:bg-indigo-700 focus:outline-none">
+                        Generate All Pretexts
+                    </button>
+                    <div class="mb-4 flex justify-end">
+                        <a :href="'/pretexts/' + domainName"
+                            class="text-indigo-500 hover:text-indigo-700 inline-flex items-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24"
+                                stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                            </svg>
+                            View Pretexts
+                        </a>
+                    </div>
                 </div>
             </div>
 
@@ -141,6 +156,12 @@
                                                 class="text-purple-500 hover:text-purple-700">
                                                 Generate Profile
                                             </button>
+                                            <button x-show="target.status === 'complete'"
+                                                @click="generatePretext(target.email)"
+                                                class="text-indigo-500 hover:text-indigo-700">
+                                                Generate Pretext
+                                            </button>
+
                                         </td>
                                     </tr>
                                 </template>
@@ -180,6 +201,15 @@
                                     stroke="currentColor">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                         d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                            </button>
+                            <button @click="generatePretext(selectedTarget ? selectedTarget.email : '')"
+                                x-show="selectedTarget && selectedTarget.status === 'complete'"
+                                class="text-indigo-500 hover:text-indigo-700 mr-4" title="Generate Pretext">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                                 </svg>
                             </button>
                             <button @click="selectedTarget = null" class="text-gray-500 hover:text-gray-700"
@@ -298,6 +328,40 @@
             </div>
         </div>
 
+        <div x-show="showPromptModal"
+            class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white rounded-lg p-6 max-w-md w-full">
+                <h3 class="text-xl font-semibold mb-4">Select Pretext Template</h3>
+                <p class="mb-6" x-text="promptModalText"></p>
+
+                <div x-show="loadingPrompts" class="flex justify-center my-4">
+                    <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
+                </div>
+
+                <div x-show="!loadingPrompts && prompts.length === 0" class="text-center py-4 text-gray-500">
+                    No pretext templates available.
+                </div>
+
+                <div x-show="!loadingPrompts && prompts.length > 0" class="mb-6">
+                    <div class="space-y-2">
+                        <template x-for="prompt in prompts" :key="prompt.id">
+                            <div class="border rounded p-3 cursor-pointer hover:bg-gray-50"
+                                @click="selectPrompt(prompt.id)">
+                                <p class="font-medium" x-text="prompt.name"></p>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <div class="flex justify-end space-x-3">
+                    <button @click="showPromptModal = false"
+                        class="px-4 py-2 border border-gray-300 rounded hover:bg-gray-100">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <div x-show="!loading && !domainData" class="bg-white shadow rounded-lg p-6 text-center">
             <p class="text-gray-700">Domain not found. Please check the URL and try again.</p>
             <a href="/" class="mt-4 inline-block bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">Return to
@@ -328,6 +392,12 @@
                 selectedTargetSources: [],
                 showDeleteConfirmation: false,
                 expandedSourceId: null,
+                prompts: [],
+                loadingPrompts: false,
+                showPromptModal: false,
+                promptModalText: '',
+                selectedTargetEmail: null,
+                generateAllTargets: false,
 
                 init() {
                     // Extract domain name from URL
@@ -343,6 +413,12 @@
 
                 connectSocket() {
                     this.socket = io();
+
+                    this.socket.on('pretextGenerated', (data) => {
+                        if (data && data.email) {
+                            this.reconStatus.unshift(`Pretext generated for ${data.email}: "${data.subject}"`);
+                        }
+                    });
 
                     this.socket.on('reconUpdate', (data) => {
                         if (data && data.message) {
@@ -414,6 +490,134 @@
                             this.loadTargets();
                         }
                     });
+                },
+                async loadPrompts() {
+                    this.loadingPrompts = true;
+                    try {
+                        const response = await fetch('/api/prompts');
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+
+                        const data = await response.json();
+
+                        if (data.success) {
+                            this.prompts = data.prompts || [];
+                        } else {
+                            console.error('Error loading prompts:', data.error);
+                            this.prompts = [];
+                        }
+                    } catch (error) {
+                        console.error('Error loading prompts:', error);
+                        this.prompts = [];
+                    } finally {
+                        this.loadingPrompts = false;
+                    }
+                },
+                // Open prompt selection modal for a single target
+                generatePretext(email) {
+                    if (!email) return;
+
+                    this.selectedTargetEmail = email;
+                    this.generateAllTargets = false;
+
+                    // Find the target name
+                    const target = this.targets.find(t => t.email === email);
+                    const targetName = target ? target.name : email;
+
+                    this.promptModalText = `Select a template to generate a pretext for ${targetName}`;
+
+                    // Load prompts and show modal
+                    this.loadPrompts();
+                    this.showPromptModal = true;
+                },
+
+                // Open prompt selection modal for all complete targets
+                generateAllPretexts() {
+                    // Count complete targets
+                    const completeTargets = this.targets.filter(t => t.status === 'complete');
+
+                    if (completeTargets.length === 0) {
+                        this.reconStatus.unshift('No complete targets available for pretext generation.');
+                        return;
+                    }
+
+                    this.selectedTargetEmail = null;
+                    this.generateAllTargets = true;
+
+                    this.promptModalText = `Select a template to generate pretexts for all ${completeTargets.length} complete targets`;
+
+                    // Load prompts and show modal
+                    this.loadPrompts();
+                    this.showPromptModal = true;
+                },
+
+                // Handle prompt selection
+                async selectPrompt(promptId) {
+                    try {
+                        this.showPromptModal = false;
+
+                        if (this.generateAllTargets) {
+                            // Generate pretexts for all complete targets
+                            const completeTargets = this.targets
+                                .filter(t => t.status === 'complete')
+                                .map(t => t.email);
+
+                            if (completeTargets.length === 0) {
+                                this.reconStatus.unshift('No complete targets available for pretext generation.');
+                                return;
+                            }
+
+                            this.reconStatus.unshift(`Queuing pretext generation for ${completeTargets.length} targets...`);
+
+                            const response = await fetch('/api/targets/generate-pretexts', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({
+                                    targetEmails: completeTargets,
+                                    promptId: promptId,
+                                    domainName: this.domainName
+                                })
+                            });
+
+                            const data = await response.json();
+
+                            if (data.success) {
+                                this.reconStatus.unshift(`Queued pretext generation for ${data.count} targets.`);
+                            } else {
+                                console.error('Error generating pretexts:', data.error);
+                                this.reconStatus.unshift(`Error generating pretexts: ${data.error}`);
+                            }
+                        } else if (this.selectedTargetEmail) {
+                            // Generate pretext for a single target
+                            this.reconStatus.unshift(`Queuing pretext generation for ${this.selectedTargetEmail}...`);
+
+                            const response = await fetch('/api/target/generate-pretext', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({
+                                    email: this.selectedTargetEmail,
+                                    promptId: promptId
+                                })
+                            });
+
+                            const data = await response.json();
+
+                            if (data.success) {
+                                this.reconStatus.unshift(`Queued pretext generation for ${this.selectedTargetEmail}.`);
+                            } else {
+                                console.error('Error generating pretext:', data.error);
+                                this.reconStatus.unshift(`Error generating pretext: ${data.error}`);
+                            }
+                        }
+                    } catch (error) {
+                        console.error('Error in pretext generation:', error);
+                        this.reconStatus.unshift(`Error in pretext generation: ${error.message}`);
+                    }
                 },
 
                 async loadDomainData() {
