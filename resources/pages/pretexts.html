@@ -50,14 +50,26 @@
                         All (<span x-text="pretexts.length"></span>)
                     </button>
                 </div>
-                <div>
-                    <label for="sortOption" class="sr-only">Sort Options</label>
-                    <select id="sortOption" x-model="sortOption" @change="sortPretexts()" class="border rounded p-2">
-                        <option value="newest">Newest First</option>
-                        <option value="oldest">Oldest First</option>
-                        <option value="targetName">Target Name</option>
-                        <option value="templateName">Template Name</option>
-                    </select>
+                <div class="flex items-center gap-3">
+                    <button @click="exportPretexts()"
+                        class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded flex items-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24"
+                            stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        Export
+                    </button>
+                    <div>
+                        <label for="sortOption" class="sr-only">Sort Options</label>
+                        <select id="sortOption" x-model="sortOption" @change="sortPretexts()"
+                            class="border rounded p-2">
+                            <option value="newest">Newest First</option>
+                            <option value="oldest">Oldest First</option>
+                            <option value="targetName">Target Name</option>
+                            <option value="templateName">Template Name</option>
+                        </select>
+                    </div>
                 </div>
             </div>
 
@@ -204,6 +216,7 @@
                 selectedPromptText: '',
                 statusMessage: '',
                 visibleTemplates: {}, // Track which templates are visible
+                exportFormat: 'json', // Default export format
 
                 init() {
                     // Extract domain name from URL
@@ -388,6 +401,58 @@
 
                 isTemplateVisible(pretextId) {
                     return !!this.visibleTemplates[pretextId];
+                },
+
+                exportPretexts() {
+                    if (this.filteredPretexts.length === 0) {
+                        this.showStatusMessage('No pretexts to export');
+                        return;
+                    }
+
+                    try {
+                        // Prepare data for export - convert to a more simplified format
+                        const exportData = this.filteredPretexts.map(pretext => {
+                            return {
+                                id: pretext.id,
+                                target_name: pretext.target_name || 'Unknown Target',
+                                target_email: pretext.target_email,
+                                subject: pretext.subject || 'No subject',
+                                body: pretext.body || 'No message body',
+                                status: pretext.status,
+                                created_at: pretext.created_at,
+                                prompt_name: pretext.prompt_name || 'Unknown Template'
+                            };
+                        });
+
+                        // Format as JSON
+                        const jsonData = JSON.stringify(exportData, null, 2);
+
+                        // Create a blob and download link
+                        const blob = new Blob([jsonData], { type: 'application/json' });
+                        const url = URL.createObjectURL(blob);
+
+                        // Create filename based on domain and current filter
+                        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                        const filename = `${this.domainName}_pretexts_${this.filterStatus}_${timestamp}.json`;
+
+                        // Create and trigger download
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = filename;
+                        document.body.appendChild(a);
+                        a.click();
+
+                        // Clean up
+                        setTimeout(() => {
+                            document.body.removeChild(a);
+                            URL.revokeObjectURL(url);
+                        }, 100);
+
+                        this.showStatusMessage(`Exported ${exportData.length} pretexts successfully`);
+                    } catch (error) {
+                        console.error('Error exporting pretexts:', error);
+                        this.showStatusMessage(`Export failed: ${error.message}`);
+                    }
                 }
             };
         }
