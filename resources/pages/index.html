@@ -119,6 +119,41 @@
                 </template>
             </div>
         </div>
+        <div class="mt-6 bg-white shadow rounded-lg p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-semibold">Queue Management</h2>
+                <button @click="clearAllQueues"
+                    class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-500"
+                    :disabled="clearingQueues">
+                    <span x-show="!clearingQueues">Clear All Queues</span>
+                    <span x-show="clearingQueues">Clearing...</span>
+                </button>
+            </div>
+
+            <div x-show="queueClearResults" class="mt-4">
+                <h3 class="font-medium text-md mb-2">Queue Clear Results:</h3>
+                <div class="p-3 bg-gray-100 rounded text-sm">
+                    <div x-show="queueClearResults.success" class="text-green-600 font-semibold mb-2"
+                        x-text="queueClearResults.message"></div>
+                    <div x-show="!queueClearResults.success" class="text-red-600 font-semibold mb-2"
+                        x-text="'Error: ' + queueClearResults.error"></div>
+
+                    <div x-show="queueClearResults.success && queueClearResults.results">
+                        <p class="font-medium">Details:</p>
+                        <ul class="list-disc list-inside ml-2">
+                            <template x-for="(result, queueName) in queueClearResults.results" :key="queueName">
+                                <li>
+                                    <span x-text="result.queue || queueName"></span>:
+                                    <span x-text="result.cleared || 0"></span> jobs cleared
+                                    <span x-show="result.error" class="text-red-500"
+                                        x-text="' - Error: ' + result.error"></span>
+                                </li>
+                            </template>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -129,6 +164,8 @@
                 reconStatus: [],
                 loading: false,
                 socket: null,
+                clearingQueues: false,
+                queueClearResults: null,
 
                 init() {
                     this.loadDomains();
@@ -155,6 +192,52 @@
                         this.reconStatus.push(`Found ${data.relatedDomains.length} related domains for ${data.primaryDomain}.`);
                         this.loadDomains(); // Refresh domain data
                     });
+
+                    this.socket.on('queuesCleared', (data) => {
+                        this.reconStatus.push(data.message);
+                    });
+                },
+
+                async clearAllQueues() {
+                    if (!confirm('Are you sure you want to clear all queues? This will stop all active jobs and remove all pending jobs from all queues.')) {
+                        return;
+                    }
+
+                    this.clearingQueues = true;
+                    this.queueClearResults = null;
+
+                    try {
+                        const response = await fetch('/api/queues/clear', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ action: 'clear' })
+                        });
+
+                        const data = await response.json();
+                        this.queueClearResults = data;
+
+                        if (data.success) {
+                            // Add to recon status log
+                            this.reconStatus.push(`All queues cleared. Stopped all OSINT gathering processes.`);
+
+                            // Calculate total jobs cleared
+                            const totalCleared = Object.values(data.results).reduce((sum, result) => sum + (result.cleared || 0), 0);
+                            this.reconStatus.push(`Cleared ${totalCleared} total jobs from all queues.`);
+                        } else {
+                            this.reconStatus.push(`Error clearing queues: ${data.error}`);
+                        }
+                    } catch (error) {
+                        console.error('Error clearing queues:', error);
+                        this.reconStatus.push(`Error clearing queues: ${error.message}`);
+                        this.queueClearResults = {
+                            success: false,
+                            error: error.message
+                        };
+                    } finally {
+                        this.clearingQueues = false;
+                    }
                 },
 
                 async loadDomains() {

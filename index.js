@@ -1088,6 +1088,38 @@ fastify.put('/api/pretext/:id/status', async (request, reply) => {
     }
 });
 
+// API route to clear all jobs in all queues
+fastify.post('/api/queues/clear', async (request, reply) => {
+    console.log('Clearing all queues...');
+    try {
+        // Clear all queues
+        const results = {
+            dnsQueue: await dnsQueue.clearQueue(),
+            sourceQueue: await sourceQueue.clearQueue(),
+            profileQueue: await profileQueue.clearQueue(),
+            pretextQueue: await pretextQueue.clearQueue()
+        };
+
+        // Notify clients that queues have been cleared
+        fastify.io.emit('queuesCleared', {
+            message: 'All queues have been cleared',
+            results
+        });
+
+        return {
+            success: true,
+            message: 'All queues have been cleared',
+            results
+        };
+    } catch (error) {
+        fastify.log.error(`Error clearing queues: ${error.message}`);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+});
+
 // Start the server
 const start = async () => {
     try {
