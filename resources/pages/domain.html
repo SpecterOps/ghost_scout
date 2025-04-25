@@ -279,7 +279,7 @@
                                             <button @click="toggleSourceContent(source.id)"
                                                 class="text-xs text-blue-500 mt-1">
                                                 <span
-                                                    x-text="expandedSourceId === source.id ? 'Hide Content Preview' : 'Show Content Preview'"></span>
+                                                    x-text="expandedSourceId === source.id ? 'Hide Content' : 'Show Content'"></span>
                                             </button>
                                             <div x-show="expandedSourceId === source.id"
                                                 class="mt-2 p-2 bg-gray-50 rounded text-xs max-h-40 overflow-y-auto">
@@ -288,7 +288,7 @@
                                                     Content Type: <span x-text="source.data.contentType"></span>
                                                 </p>
                                                 <p x-show="source.data && source.data.content"
-                                                    x-text="typeof source.data.content === 'string' ? source.data.content.substring(0, 300) + '...' : 'Content preview not available'">
+                                                    x-text="typeof source.data.content === 'string' ? source.data.content : 'Content not available'">
                                                 </p>
                                                 <p x-show="!source.data || !source.data.content"
                                                     class="italic text-gray-500">No content available</p>
