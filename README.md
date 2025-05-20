@@ -11,7 +11,7 @@ This application allows red teamers to:
 - Find potential contacts/employees at target companies
 - Scrape sources to enrich contact profiles
 - Generate profiles for discovered employees using AI
-- Create personalized outreach messages (pretexts) for sales communication
+- Create personalized outreach messages (pretexts) for phishing
 
 ## Technologies
 
@@ -19,6 +19,7 @@ This application allows red teamers to:
 - **Frontend**: Alpine.js + Tailwind CSS + Socket.io
 - **Database**: SQLite
 - **Job Processing**: Bee-Queue + Redis
+- **HTML to Markdown Conversion**: [MarkItDown-API](https://github.com/fkasler/markitdown-api)
 - **Real-time Updates**: Socket.io
 
 ## Key Features
@@ -27,13 +28,14 @@ This application allows red teamers to:
 - **Email Format Detection**: Identify company email patterns
 - **Contact Discovery**: Find potential contacts using Hunter.io API
 - **Source Scraping**: Scrape discovered sources for more information
+- **Source Conversion**: HTML to Markdown conversion of sources for better LLM queries
 - **Profile Generation**: Generate detailed profiles using AI
-- **Pretext Generation**: Create personalized sales outreach messages with AI
+- **Pretext Generation**: Create personalized phishing messages with AI
 - **Real-time Updates**: Get live feedback as reconnaissance and processing happens
 
 ## Project Structure
 
-```
+```bash
 /
 ├── index.js                # Main application entry point
 ├── db/                     # SQLite database files
@@ -62,7 +64,7 @@ The application uses the following tables:
 - **SourceData**: Contains information about URLs where target data was found
 - **TargetSourceMap**: Maps the many-to-many relationship between targets and sources
 - **Prompt**: Stores LLM prompts for pretext generation
-- **Pretext**: Stores generated sales outreach messages
+- **Pretext**: Stores generated phishing messages
 
 ## Requirements
 
@@ -73,13 +75,13 @@ You will need a Hunter.io API key and an Anthropic API key to use this project i
 1. Clone the repository
 2. Install dependencies:
 
-   ```
+   ```bash
    npm install
    ```
 
 3. Create a `.env` file with your API credentials:
 
-   ```
+   ```bash
    HUNTER_API_KEY=your_hunter.io_api_key
    ANTHROPIC_API_KEY=your_anthropic_api_key 
    ```
@@ -106,13 +108,19 @@ You will need a Hunter.io API key and an Anthropic API key to use this project i
    docker start redis
    ```
 
-5. Start the application:
+5. Start MarkItDown-API instance from github:
 
+   ```bash
+   docker run -d --name markitdown-api -p 8490:8490 ghcr.io/fkasler/markitdown-api:sha-ee4fcafe2cf2f17fbbff77cc7f1b1c81a7c370d2
    ```
+
+6. Start the application:
+
+   ```bash
    node index.js
    ```
 
-6. Access the application at `http://localhost:3000`
+7. Access the application at `http://localhost:3000`
 
 ## Workflow
 
@@ -121,7 +129,7 @@ You will need a Hunter.io API key and an Anthropic API key to use this project i
 3. Scrape sources to enrich contact information
 4. Generate profiles for discovered contacts
 5. Create personalized pretexts for outreach
-6. Review, approve, and export pretexts for use in your sales campaigns
+6. Review, approve, and export pretexts for use in your phishing campaigns
 
 ## License
 
@@ -130,3 +138,10 @@ This project is for personal use only and should be used responsibly and ethical
 ## Disclaimer
 
 This tool is designed for legitimate penetration testing and red teaming assessments. Always ensure compliance with privacy laws, email regulations, and terms of service of any integrated services. Use responsibly.
+
+## TODO
+
+- [ ] "Dockerize" the application with Docker Compose
+- [ ] Add more sources for scraping
+- [ ] Add more LLM providers
+- [ ] Add more pretext templates
