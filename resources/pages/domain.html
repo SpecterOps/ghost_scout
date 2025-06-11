@@ -251,10 +251,12 @@
                             x-text="selectedTarget ? formatTenure(selectedTarget.tenure_start, true) : ''">
                         </p>
 
-                        <div x-show="selectedTargetSources.length > 0">
+                        <div
+                            x-show="selectedTargetSources && Array.isArray(selectedTargetSources) && selectedTargetSources.length > 0">
                             <h4 class="font-medium mb-2">Sources</h4>
                             <ul class="space-y-2">
-                                <template x-for="source in selectedTargetSources" :key="source.id">
+                                <template x-for="(source, index) in selectedTargetSources"
+                                    :key="getSourceKey(source, index)">
                                     <li class="border rounded p-3">
                                         <div class="flex justify-between">
                                             <a :href="source.url" target="_blank"
@@ -265,7 +267,7 @@
                                         </div>
                                         <p class="text-sm text-gray-500 mt-1">
                                             <span x-text="'Status: ' + source.status"></span>
-                                            <span x-if="source.data && source.data.extracted_on"
+                                            <span x-show="source.data && source.data.extracted_on"
                                                 x-text="' | First seen: ' + formatDate(source.data.extracted_on)"
                                                 class="ml-2"></span>
                                         </p>
@@ -276,12 +278,12 @@
                                                 x-show="source.data && source.data.scrapedAt">
                                                 Scraped: <span x-text="formatDate(source.data.scrapedAt)"></span>
                                             </p>
-                                            <button @click="toggleSourceContent(source.id)"
+                                            <button @click="toggleSourceContent(getSourceKey(source, index))"
                                                 class="text-xs text-blue-500 mt-1">
                                                 <span
-                                                    x-text="expandedSourceId === source.id ? 'Hide Content' : 'Show Content'"></span>
+                                                    x-text="expandedSourceId === getSourceKey(source, index) ? 'Hide Content' : 'Show Content'"></span>
                                             </button>
-                                            <div x-show="expandedSourceId === source.id"
+                                            <div x-show="expandedSourceId === getSourceKey(source, index)"
                                                 class="mt-2 p-2 bg-gray-50 rounded text-xs max-h-40 overflow-y-auto">
                                                 <p class="text-xs text-gray-500 mb-1"
                                                     x-show="source.data && source.data.contentType">
@@ -299,7 +301,8 @@
                             </ul>
                         </div>
 
-                        <div x-show="selectedTargetSources.length === 0" class="text-center py-4 text-gray-500">
+                        <div x-show="!selectedTargetSources || !Array.isArray(selectedTargetSources) || selectedTargetSources.length === 0"
+                            class="text-center py-4 text-gray-500">
                             No sources found for this contact.
                         </div>
                     </div>
@@ -404,11 +407,24 @@
                     const urlParts = window.location.pathname.split('/');
                     this.domainName = urlParts[urlParts.length - 1];
 
+                    // Ensure arrays are properly initialized
+                    this.targets = [];
+                    this.selectedTargetSources = [];
+                    this.reconStatus = [];
+                    this.prompts = [];
+
                     // Connect socket for real-time updates
                     this.connectSocket();
 
                     // Load domain data
                     this.loadDomainData();
+                },
+
+                // Helper function to generate unique keys for sources
+                getSourceKey(source, index) {
+                    // Always use index as primary key to ensure uniqueness
+                    // This prevents any duplicate key issues
+                    return `source-${index}`;
                 },
 
                 connectSocket() {
@@ -702,6 +718,11 @@
                     if (!email) return;
 
                     try {
+                        // Reset state first to prevent stale data
+                        this.selectedTarget = null;
+                        this.selectedTargetSources = [];
+                        this.expandedSourceId = null;
+
                         // Get target details
                         const response = await fetch(`/api/target/${encodeURIComponent(email)}`);
                         if (!response.ok) {
@@ -710,27 +731,56 @@
 
                         const data = await response.json();
 
-                        if (data.success) {
+                        if (data.success && data.target) {
                             this.selectedTarget = data.target;
 
-                            // Parse the JSON data for each source if it's a string
-                            this.selectedTargetSources = (data.sources || []).map(source => {
-                                if (source.data && typeof source.data === 'string') {
-                                    try {
-                                        source.data = JSON.parse(source.data);
-                                    } catch (e) {
-                                        console.error('Error parsing source data JSON:', e);
-                                        // Keep the original string if parsing fails
-                                        source.data = { content: source.data };
+                            // Ensure sources is always an array
+                            const sources = Array.isArray(data.sources) ? data.sources : [];
+
+                            // Process and normalize the sources data
+                            this.selectedTargetSources = sources.map((source, index) => {
+                                // Create a clean source object to avoid any reference issues
+                                const cleanSource = {
+                                    id: source.id || `generated-${index}-${Date.now()}`,
+                                    url: source.url || 'Unknown URL',
+                                    source_domain_name: source.source_domain_name || 'Unknown Domain',
+                                    discovery_method: source.discovery_method || 'Unknown Method',
+                                    status: source.status || 'Unknown',
+                                    data: null
+                                };
+
+                                // Parse JSON data if it's a string
+                                if (source.data) {
+                                    if (typeof source.data === 'string') {
+                                        try {
+                                            cleanSource.data = JSON.parse(source.data);
+                                        } catch (e) {
+                                            console.error('Error parsing source data JSON:', e);
+                                            cleanSource.data = { content: source.data };
+                                        }
+                                    } else if (typeof source.data === 'object') {
+                                        cleanSource.data = source.data;
                                     }
                                 }
-                                return source;
+
+                                // Ensure data has basic structure
+                                if (!cleanSource.data) {
+                                    cleanSource.data = {};
+                                }
+
+                                return cleanSource;
                             });
+
+                            console.log(`Loaded ${this.selectedTargetSources.length} sources for ${email}`);
                         } else {
-                            console.error('Error loading target details:', data.error);
+                            console.error('Error loading target details:', data.error || 'No target data');
+                            this.selectedTarget = null;
+                            this.selectedTargetSources = [];
                         }
                     } catch (error) {
                         console.error('Error loading target details:', error);
+                        this.selectedTarget = null;
+                        this.selectedTargetSources = [];
                     }
                 },
 
@@ -758,6 +808,7 @@
                             // Close modals
                             this.showDeleteConfirmation = false;
                             this.selectedTarget = null;
+                            this.selectedTargetSources = [];
 
                             // Refresh targets list
                             this.loadTargets();
@@ -892,11 +943,12 @@
                     }
                 },
 
-                toggleSourceContent(sourceId) {
-                    if (this.expandedSourceId === sourceId) {
+                toggleSourceContent(sourceKey) {
+                    // sourceKey should be like "source-0", "source-1", etc.
+                    if (this.expandedSourceId === sourceKey) {
                         this.expandedSourceId = null;
                     } else {
-                        this.expandedSourceId = sourceId;
+                        this.expandedSourceId = sourceKey;
                     }
                 },
 

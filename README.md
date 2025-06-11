@@ -142,6 +142,8 @@ This tool is designed for legitimate penetration testing and red teaming assessm
 ## TODO
 
 - [ ] "Dockerize" the application with Docker Compose
+- [ ] Page to manage prompt library
+- [ ] User/Target info on the pretexts page for manual validation
 - [ ] Add more sources for scraping
 - [ ] Add more LLM providers
 - [ ] Add more pretext templates
